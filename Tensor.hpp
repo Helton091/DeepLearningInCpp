@@ -13,6 +13,9 @@ template<typename real>
 std::ostream& operator<<(std::ostream& os, const Tensor<real>& t);
 
 template<typename real>
+Tensor<real> operator+(const Tensor<real>& A,const Tensor<real>& B);
+
+template<typename real>
 class Tensor{
 private:
     std::shared_ptr<real []> data_; 
@@ -25,8 +28,51 @@ private:
 public:
     size_t numel() const noexcept{return numel_;}
     Tensor(const std::vector<int>& shape,bool requires_grad = false);
-    friend ostream & operator<< <> (ostream & os,const Tensor<real>& t);
+    friend ostream & operator<< <>(ostream & os,const Tensor<real>& t);
+    friend Tensor<real> operator+ <>(const Tensor<real>& A,const Tensor<real>& B);
+    Tensor(Tensor&& other) noexcept = default;
 };
+
+template<typename real>
+Tensor<real> operator+(const Tensor<real>& A,const Tensor<real>& B){
+    
+    int a_ndim = A.shape_.size();
+    int b_ndim = B.shape_.size();
+    int max_ndim = std::max(a_ndim,b_ndim);
+    std::vector<int> output_shape;
+    output_shape.resize(max_ndim);
+    //step 1: check broadcasting and determine output_shape
+    for(int i=0;i<max_ndim;++i){
+        int a_dim = (i < a_ndim) ? A.shape_[i] : 1;
+        int b_dim = (i < b_ndim) ? B.shape_[i] : 1;
+        if(a_dim!=1 && b_dim!=1 && a_dim!=b_dim){
+            throw std::invalid_argument("Tensor shape mismatch when broadcasting");
+        }
+        output_shape[i] = std::max(a_dim,b_dim);
+    }
+    //step2: addition
+    Tensor<real> output(output_shape);
+    for(int i=0;i<output.numel_;++i){
+        int res = i;
+        std::vector<int> indices_out;
+        indices_out.resize(max_ndim);
+        for(int j=0;j<max_ndim;++j){
+            indices_out[j] = res / output.stride_[j];
+            res = (res % output.stride_[j]);
+        }
+        int i1=0,i2=0;
+        for(int j=0;j<max_ndim;++j){
+            if(j<a_ndim && A.shape_[j] == output.shape_[j]){
+                i1 += indices_out[j] * A.stride_[j];
+            }
+            if(j<b_ndim && B.shape_[j] == output.shape_[j]){
+                i2 += indices_out[j] * B.stride_[j];
+            }
+        }
+        output.data_[i] = A.data_[i1] + B.data_[i2];
+    }
+    return output;
+}
 template<typename real>
 ostream & operator<< (ostream & os,const Tensor<real>& t){
     os << "tensor(";

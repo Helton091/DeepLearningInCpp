@@ -9,7 +9,7 @@
 *.dll
 
 
-# .vscode/
+.vscode/
 
 
 *.log
