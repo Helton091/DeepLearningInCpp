@@ -1,0 +1,16 @@
+
+*.exe
+*.obj
+*.pdb
+*.o
+*.out
+*.a
+*.lib
+*.dll
+
+
+# .vscode/
+
+
+*.log
+*.tmp
