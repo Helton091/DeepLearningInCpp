@@ -5,7 +5,16 @@
 #include<stdexcept>
 #include<algorithm>
 #include<iostream>
-using std::ostream;
+#include<string>
+using std::ostream,std::string;
+namespace torch{
+class BroadCastingError : public std::invalid_argument{
+public:
+    BroadCastingError(const std::vector<int>& shape1,const std::vector<int>& shape2,int op,const string& str = "") : std::invalid_argument(build_message(shape1,shape2,op,str)){}
+private:
+    string build_message(const std::vector<int>& shape1,const std::vector<int>& shape2,int op,const string& str);
+};
+
 template<typename real>
 class Tensor;
 
@@ -15,6 +24,38 @@ std::ostream& operator<<(std::ostream& os, const Tensor<real>& t);
 template<typename real>
 Tensor<real> operator+(const Tensor<real>& A,const Tensor<real>& B);
 
+template<typename real>
+Tensor<real> operator+ (const Tensor<real>& A,real B);
+
+template<typename real>
+Tensor<real> operator+ (real A,const Tensor<real>& B);
+
+template<typename real>
+Tensor<real> operator-(const Tensor<real>& A,const Tensor<real>& B);
+
+template<typename real>
+Tensor<real> operator- (const Tensor<real>& A,real B);
+
+template<typename real>
+Tensor<real> operator- (real A,const Tensor<real>& B);
+
+template<typename real>
+Tensor<real> operator*(const Tensor<real>& A,const Tensor<real>& B);
+
+template<typename real>
+Tensor<real> operator* (const Tensor<real>& A,real B);
+
+template<typename real>
+Tensor<real> operator* (real A,const Tensor<real>& B);
+
+template<typename real>
+Tensor<real> operator/(const Tensor<real>& A,const Tensor<real>& B);
+
+template<typename real>
+Tensor<real> operator/ (const Tensor<real>& A,real B);
+
+template<typename real>
+Tensor<real> operator/ (real A,const Tensor<real>& B);
 template<typename real>
 class Tensor{
 private:
@@ -27,12 +68,70 @@ private:
     void init_metadata(); //shape_ -> stride_ + numel_
 public:
     size_t numel() const noexcept{return numel_;}
+    const real* data_ptr() const{return data_.get();}
+    real* data_ptr(){return data_.get();}
+    
     Tensor(const std::vector<int>& shape,bool requires_grad = false);
+    Tensor(Tensor&& other) noexcept = default;
+    
     friend ostream & operator<< <>(ostream & os,const Tensor<real>& t);
     friend Tensor<real> operator+ <>(const Tensor<real>& A,const Tensor<real>& B);
-    Tensor(Tensor&& other) noexcept = default;
+    friend Tensor<real> operator+ <>(const Tensor<real>& A,real B);
+    friend Tensor<real> operator+ <>(real A,const Tensor<real>& B);
+    friend Tensor<real> operator- <>(const Tensor<real>& A,const Tensor<real>& B);
+    friend Tensor<real> operator- <>(const Tensor<real>& A,real B);
+    friend Tensor<real> operator- <>(real A,const Tensor<real>& B);
+    friend Tensor<real> operator* <>(const Tensor<real>& A,const Tensor<real>& B);
+    friend Tensor<real> operator* <>(const Tensor<real>& A,real B);
+    friend Tensor<real> operator* <>(real A,const Tensor<real>& B);
+    friend Tensor<real> operator/ <>(const Tensor<real>& A,const Tensor<real>& B);
+    friend Tensor<real> operator/ <>(const Tensor<real>& A,real B);
+    friend Tensor<real> operator/ <>(real A,const Tensor<real>& B);
+    
+    void fill_(real value);
 };
 
+string BroadCastingError::build_message(const std::vector<int>& shape1,const std::vector<int>& shape2,int op,const string& str){
+    string msg = "shape mismatch when ";
+    switch(op){
+    case 0:
+        msg += "adding";
+        break;
+    case 1:
+        msg += "subtracting";
+        break;
+    case 2:
+        msg += "element-wise-multiplying";
+        break;
+    case 3:
+        msg += "element-wise-dividing";
+        break;
+    }
+    msg += " tensors with shape [";
+    for(int dim : shape1){msg += std::to_string(dim);msg+=",";}
+    msg += "] and [";
+    for(int dim : shape2){msg += std::to_string(dim);msg+=',';}
+    msg += "]";
+    msg = msg + "\n" + str;
+    return msg;
+}
+template<typename real>
+void Tensor<real>::fill_(real value){
+    std::fill_n(data_.get(), numel_, value);
+}
+template<typename real>
+Tensor<real> operator+(real A,const Tensor<real>& B){
+    Tensor<real> output(B.shape_);
+    for(int i=0;i<B.numel_;++i) output.data_[i] = A + B.data_[i];
+    return output;
+}
+
+template<typename real>
+Tensor<real> operator+ (const Tensor<real>& A,real B){
+    Tensor<real> output(A.shape_);
+    for(int i=0;i<A.numel_;++i) output.data_[i] = B + A.data_[i];
+    return output;
+}
 template<typename real>
 Tensor<real> operator+(const Tensor<real>& A,const Tensor<real>& B){
     
@@ -43,12 +142,14 @@ Tensor<real> operator+(const Tensor<real>& A,const Tensor<real>& B){
     output_shape.resize(max_ndim);
     //step 1: check broadcasting and determine output_shape
     for(int i=0;i<max_ndim;++i){
-        int a_dim = (i < a_ndim) ? A.shape_[i] : 1;
-        int b_dim = (i < b_ndim) ? B.shape_[i] : 1;
+        int a_idx = a_ndim - i - 1;
+        int b_idx = b_ndim - i - 1;
+        int a_dim = (a_idx >= 0) ? A.shape_[a_idx] : 1;
+        int b_dim = (b_idx >= 0) ? B.shape_[b_idx] : 1;
         if(a_dim!=1 && b_dim!=1 && a_dim!=b_dim){
-            throw std::invalid_argument("Tensor shape mismatch when broadcasting");
+            throw BroadCastingError(A.shape_,B.shape_,0,"Tensor shape mismatch when broadcasting");
         }
-        output_shape[i] = std::max(a_dim,b_dim);
+        output_shape[max_ndim - i - 1] = std::max(a_dim,b_dim);
     }
     //step2: addition
     Tensor<real> output(output_shape);
@@ -57,22 +158,253 @@ Tensor<real> operator+(const Tensor<real>& A,const Tensor<real>& B){
         std::vector<int> indices_out;
         indices_out.resize(max_ndim);
         for(int j=0;j<max_ndim;++j){
-            indices_out[j] = res / output.stride_[j];
-            res = (res % output.stride_[j]);
+            if(output.stride_[j]==0) indices_out[j]=0;
+            else{indices_out[j] = res / output.stride_[j];
+            res = (res % output.stride_[j]);}
         }
         int i1=0,i2=0;
         for(int j=0;j<max_ndim;++j){
-            if(j<a_ndim && A.shape_[j] == output.shape_[j]){
-                i1 += indices_out[j] * A.stride_[j];
+            int a_idx=0,b_idx=0;
+            a_idx = j - (max_ndim - a_ndim);
+            b_idx = j - (max_ndim - b_ndim);
+            if(a_idx >= 0 && A.shape_[a_idx] == output.shape_[j]){
+                i1 += indices_out[j] * A.stride_[a_idx];
             }
-            if(j<b_ndim && B.shape_[j] == output.shape_[j]){
-                i2 += indices_out[j] * B.stride_[j];
+            if(b_idx >= 0 && B.shape_[b_idx] == output.shape_[j]){
+                i2 += indices_out[j] * B.stride_[b_idx];
             }
         }
         output.data_[i] = A.data_[i1] + B.data_[i2];
     }
     return output;
 }
+
+template<typename real>
+Tensor<real> operator-(real A, const Tensor<real>& B){
+    Tensor<real> output(B.shape_);
+    for(int i = 0; i < B.numel_; ++i) {
+        output.data_[i] = A - B.data_[i];
+    }
+    return output;
+}
+
+template<typename real>
+Tensor<real> operator-(const Tensor<real>& A, real B){
+    Tensor<real> output(A.shape_);
+    for(int i = 0; i < A.numel_; ++i) {
+        output.data_[i] = A.data_[i] - B;
+    }
+    return output;
+}
+
+template<typename real>
+Tensor<real> operator-(const Tensor<real>& A, const Tensor<real>& B){
+    int a_ndim = A.shape_.size();
+    int b_ndim = B.shape_.size();
+    int max_ndim = std::max(a_ndim, b_ndim);
+    std::vector<int> output_shape;
+    output_shape.resize(max_ndim);
+    
+    // step 1
+    for(int i = 0; i < max_ndim; ++i){
+        int a_idx = a_ndim - i - 1;
+        int b_idx = b_ndim - i - 1;
+        int a_dim = (a_idx >= 0) ? A.shape_[a_idx] : 1;
+        int b_dim = (b_idx >= 0) ? B.shape_[b_idx] : 1;
+        
+        if(a_dim != 1 && b_dim != 1 && a_dim != b_dim){
+            // op = 1 represents subtracting
+            throw BroadCastingError(A.shape_, B.shape_, 1, "Tensor shape mismatch when broadcasting");
+        }
+        output_shape[max_ndim - i - 1] = std::max(a_dim, b_dim);
+    }
+    
+    // step 2
+    Tensor<real> output(output_shape);
+    for(int i = 0; i < output.numel_; ++i){
+        int res = i;
+        std::vector<int> indices_out;
+        indices_out.resize(max_ndim);
+        for(int j = 0; j < max_ndim; ++j){
+            if(output.stride_[j] == 0) {
+                indices_out[j] = 0;
+            } else {
+                indices_out[j] = res / output.stride_[j];
+                res = (res % output.stride_[j]);
+            }
+        }
+        
+        int i1 = 0, i2 = 0;
+        for(int j = 0; j < max_ndim; ++j){
+            int a_idx = 0, b_idx = 0;
+            a_idx = j - (max_ndim - a_ndim);
+            b_idx = j - (max_ndim - b_ndim);
+            if(a_idx >= 0 && A.shape_[a_idx] == output.shape_[j]){
+                i1 += indices_out[j] * A.stride_[a_idx];
+            }
+            if(b_idx >= 0 && B.shape_[b_idx] == output.shape_[j]){
+                i2 += indices_out[j] * B.stride_[b_idx];
+            }
+        }
+        output.data_[i] = A.data_[i1] - B.data_[i2];
+    }
+    return output;
+}
+
+template<typename real>
+Tensor<real> operator*(real A, const Tensor<real>& B){
+    Tensor<real> output(B.shape_);
+    for(int i = 0; i < B.numel_; ++i) {
+        output.data_[i] = A * B.data_[i];
+    }
+    return output;
+}
+
+template<typename real>
+Tensor<real> operator*(const Tensor<real>& A, real B){
+    Tensor<real> output(A.shape_);
+    for(int i = 0; i < A.numel_; ++i) {
+        output.data_[i] = A.data_[i] * B;
+    }
+    return output;
+}
+
+template<typename real>
+Tensor<real> operator*(const Tensor<real>& A, const Tensor<real>& B){
+    int a_ndim = A.shape_.size();
+    int b_ndim = B.shape_.size();
+    int max_ndim = std::max(a_ndim, b_ndim);
+    std::vector<int> output_shape;
+    output_shape.resize(max_ndim);
+    
+    // step 1
+    for(int i = 0; i < max_ndim; ++i){
+        int a_idx = a_ndim - i - 1;
+        int b_idx = b_ndim - i - 1;
+        int a_dim = (a_idx >= 0) ? A.shape_[a_idx] : 1;
+        int b_dim = (b_idx >= 0) ? B.shape_[b_idx] : 1;
+        
+        if(a_dim != 1 && b_dim != 1 && a_dim != b_dim){
+            // op = 2 represents element-wise-multiplying
+            throw BroadCastingError(A.shape_, B.shape_, 2, "Tensor shape mismatch when broadcasting");
+        }
+        output_shape[max_ndim - i - 1] = std::max(a_dim, b_dim);
+    }
+    
+    // step 2
+    Tensor<real> output(output_shape);
+    for(int i = 0; i < output.numel_; ++i){
+        int res = i;
+        std::vector<int> indices_out;
+        indices_out.resize(max_ndim);
+        for(int j = 0; j < max_ndim; ++j){
+            if(output.stride_[j] == 0) {
+                indices_out[j] = 0;
+            } else {
+                indices_out[j] = res / output.stride_[j];
+                res = (res % output.stride_[j]);
+            }
+        }
+        
+        int i1 = 0, i2 = 0;
+        for(int j = 0; j < max_ndim; ++j){
+            int a_idx = 0, b_idx = 0;
+            a_idx = j - (max_ndim - a_ndim);
+            b_idx = j - (max_ndim - b_ndim);
+            if(a_idx >= 0 && A.shape_[a_idx] == output.shape_[j]){
+                i1 += indices_out[j] * A.stride_[a_idx];
+            }
+            if(b_idx >= 0 && B.shape_[b_idx] == output.shape_[j]){
+                i2 += indices_out[j] * B.stride_[b_idx];
+            }
+        }
+        output.data_[i] = A.data_[i1] * B.data_[i2];
+    }
+    return output;
+}
+
+template<typename real>
+Tensor<real> operator/(real A, const Tensor<real>& B){
+    Tensor<real> output(B.shape_);
+    for(int i = 0; i < B.numel_; ++i) {
+        if(B.data_[i] == static_cast<real>(0)){
+            throw std::invalid_argument("Division by zero encountered in tensor elements");
+        }
+        output.data_[i] = A / B.data_[i];
+    }
+    return output;
+}
+
+template<typename real>
+Tensor<real> operator/(const Tensor<real>& A, real B){
+    if(B == static_cast<real>(0)){
+        throw std::invalid_argument("Division by zero encountered with scalar");
+    }
+    Tensor<real> output(A.shape_);
+    for(int i = 0; i < A.numel_; ++i) {
+        output.data_[i] = A.data_[i] / B;
+    }
+    return output;
+}
+
+template<typename real>
+Tensor<real> operator/(const Tensor<real>& A, const Tensor<real>& B){
+    int a_ndim = A.shape_.size();
+    int b_ndim = B.shape_.size();
+    int max_ndim = std::max(a_ndim, b_ndim);
+    std::vector<int> output_shape;
+    output_shape.resize(max_ndim);
+    
+    // step 1
+    for(int i = 0; i < max_ndim; ++i){
+        int a_idx = a_ndim - i - 1;
+        int b_idx = b_ndim - i - 1;
+        int a_dim = (a_idx >= 0) ? A.shape_[a_idx] : 1;
+        int b_dim = (b_idx >= 0) ? B.shape_[b_idx] : 1;
+        
+        if(a_dim != 1 && b_dim != 1 && a_dim != b_dim){
+            // op = 3 represents element-wise-dividing
+            throw BroadCastingError(A.shape_, B.shape_, 3, "Tensor shape mismatch when broadcasting");
+        }
+        output_shape[max_ndim - i - 1] = std::max(a_dim, b_dim);
+    }
+    
+    // step 2
+    Tensor<real> output(output_shape);
+    for(int i = 0; i < output.numel_; ++i){
+        int res = i;
+        std::vector<int> indices_out;
+        indices_out.resize(max_ndim);
+        for(int j = 0; j < max_ndim; ++j){
+            if(output.stride_[j] == 0) {
+                indices_out[j] = 0;
+            } else {
+                indices_out[j] = res / output.stride_[j];
+                res = (res % output.stride_[j]);
+            }
+        }
+        
+        int i1 = 0, i2 = 0;
+        for(int j = 0; j < max_ndim; ++j){
+            int a_idx = 0, b_idx = 0;
+            a_idx = j - (max_ndim - a_ndim);
+            b_idx = j - (max_ndim - b_ndim);
+            if(a_idx >= 0 && A.shape_[a_idx] == output.shape_[j]){
+                i1 += indices_out[j] * A.stride_[a_idx];
+            }
+            if(b_idx >= 0 && B.shape_[b_idx] == output.shape_[j]){
+                i2 += indices_out[j] * B.stride_[b_idx];
+            }
+        }
+        
+        if(B.data_[i2] == static_cast<real>(0)){
+            throw std::invalid_argument("Division by zero encountered in tensor elements");
+        }
+        output.data_[i] = A.data_[i1] / B.data_[i2];
+    }
+    return output;
+}
+
 template<typename real>
 ostream & operator<< (ostream & os,const Tensor<real>& t){
     os << "tensor(";
@@ -151,5 +483,6 @@ Tensor<real>::Tensor(const std::vector<int> & shape,bool requires_grad){
     init_metadata();
     data_ = std::shared_ptr<real []>(new real[numel_]);
 
+}
 }
 #endif
