@@ -70,7 +70,8 @@ public:
     size_t numel() const noexcept{return numel_;}
     const real* data_ptr() const{return data_.get();}
     real* data_ptr(){return data_.get();}
-    
+    const std::vector<int>& shape()const noexcept{return shape_;}
+
     Tensor(const std::vector<int>& shape,bool requires_grad = false);
     Tensor(Tensor&& other) noexcept = default;
     
