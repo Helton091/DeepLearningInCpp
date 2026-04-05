@@ -66,6 +66,7 @@ private:
     bool requires_grad_;
     void print_recursive(std::ostream& os, int dim_index, int current_offset) const;
     void init_metadata(); //shape_ -> stride_ + numel_
+    Tensor(const std::vector<int>& shape,std::shared_ptr<real[]> shared_data,bool requires_grad);
 public:
     size_t numel() const noexcept{return numel_;}
     const real* data_ptr() const{return data_.get();}
@@ -89,8 +90,53 @@ public:
     friend Tensor<real> operator/ <>(const Tensor<real>& A,real B);
     friend Tensor<real> operator/ <>(real A,const Tensor<real>& B);
     
+    Tensor<real> reshape(std::vector<int> new_shape) const;
     void fill_(real value);
 };
+
+template<typename real> 
+Tensor<real> Tensor<real>::reshape(std::vector<int> new_shape) const {
+    int minus_one_index = -1; 
+    int curr_numel = 1; 
+
+    for(int i = 0; i < new_shape.size(); ++i){ 
+        if(new_shape[i] == -1){
+            if(minus_one_index != -1) {
+                throw std::invalid_argument("there is at most one -1 in the shape when reshaping"); 
+            }
+            minus_one_index = i; 
+        } 
+        else if (new_shape[i] <= 0) {
+             throw std::invalid_argument("shape dimensions must be positive integers");
+        }
+        else {
+            curr_numel *= new_shape[i]; 
+        }
+    } 
+
+    if(minus_one_index != -1){ 
+        
+        if (numel_ % curr_numel != 0) {
+            throw std::invalid_argument("unable to reshape due to numel mismatch (indivisible)");
+        }
+        new_shape[minus_one_index] = numel_ / curr_numel; 
+        curr_numel *= new_shape[minus_one_index]; 
+    } 
+
+    if(curr_numel != numel_) {
+        throw std::invalid_argument("unable to reshape due to numel mismatch"); 
+    }
+
+    Tensor<real> output(std::move(new_shape), data_, requires_grad_); 
+    return output; 
+} 
+template<typename real>
+Tensor<real>::Tensor(const std::vector<int>& shape,std::shared_ptr<real[]> shared_data,bool requires_grad){
+    shape_ = shape;
+    data_ = shared_data;
+    init_metadata();
+    requires_grad_ = requires_grad;
+}
 
 string BroadCastingError::build_message(const std::vector<int>& shape1,const std::vector<int>& shape2,int op,const string& str){
     string msg = "shape mismatch when ";
