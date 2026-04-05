@@ -67,6 +67,7 @@ private:
     void print_recursive(std::ostream& os, int dim_index, int current_offset) const;
     void init_metadata(); //shape_ -> stride_ + numel_
     Tensor(const std::vector<int>& shape,std::shared_ptr<real[]> shared_data,bool requires_grad);
+    Tensor(const std::vector<int>& shape,std::vector<int>& stride,std::shared_ptr<real []> shared_data,bool requires_grad);
 public:
     size_t numel() const noexcept{return numel_;}
     const real* data_ptr() const{return data_.get();}
@@ -91,8 +92,75 @@ public:
     friend Tensor<real> operator/ <>(real A,const Tensor<real>& B);
     
     Tensor<real> reshape(std::vector<int> new_shape) const;
+    Tensor<real> transpose(int dim0, int dim1) const;
+    Tensor<real> permute(std::vector<int> dims) const;
+    Tensor<real> contiguous() const; //return a new tensor with decreasing stride
+    bool is_contiguous() const;
     void fill_(real value);
 };
+template<typename real>
+bool Tensor<real>::is_contiguous() const{
+    int ndim = static_cast<int>(shape_.size());
+    if(ndim==0) return true;
+    int expected_stride = 1;
+    for(int i=ndim-1;i>=0;--i){
+        if(shape_[i] != 1 && stride_[i] != expected_stride) return false;
+        //shape = 1 don't affect contiguous. this is a mismatch between theory and practice
+        expected_stride *= shape_[i];
+    }
+    return true;
+}
+
+template<typename real>
+Tensor<real> Tensor<real>::permute(std::vector<int> dims) const{
+    if(dims.size() != shape_.size()){
+        throw std::invalid_argument("dimension error when permuting vector");
+    }
+    int ndim = static_cast<int>(dims.size());
+    std::vector<bool> seen(ndim,false);
+    bool is_no_op = true;
+    for(int i=0;i<ndim;++i){
+        if(dims[i] < 0) dims[i] += ndim;
+        if(dims[i] < 0 || dims[i] >= ndim) throw std::invalid_argument("dimension error when permuting vector");
+        if(seen[dims[i]]) throw std::invalid_argument("dimension error when permuting vector");
+        if(dims[i] != i) is_no_op=false;
+        seen[dims[i]] = true;
+    }
+    if(is_no_op) return *this;
+    std::vector<int> new_shape(ndim);
+    std::vector<int> new_stride(ndim);
+    for(int i=0;i<ndim;++i){
+        new_shape[i] = shape_[dims[i]];
+        new_stride[i] = stride_[dims[i]];
+    }
+    return Tensor<real>(std::move(new_shape),std::move(new_stride),data_,requires_grad_);
+}
+template<typename real>
+Tensor<real>::Tensor(const std::vector<int>& shape,std::vector<int>& stride,std::shared_ptr<real []> shared_data,bool requires_grad){
+    shape_ = shape;
+    stride_ = stride;
+    data_ = shared_data;
+    requires_grad_ = requires_grad;
+}
+
+template<typename real>
+Tensor<real> Tensor<real>::transpose(int dim0, int dim1) const{
+    int ndim = static_cast<int>(shape_.size());
+    if(dim0 < 0) dim0 += ndim;
+    if(dim1 < 0) dim1 += ndim;
+    if(dim0<0 || dim1<0 || dim0>=ndim || dim1>=ndim){
+        throw std::invalid_argument("dimension out of bound when transposing");
+    }
+    if(dim0==dim1) return *this;
+
+    std::vector<int> new_shape = shape_;
+    std::vector<int> new_stride = stride_;
+    
+    std::swap(new_shape[dim0],new_shape[dim1]);
+    std::swap(new_stride[dim0],new_stride[dim1]);
+    
+    return Tensor<real>(std::move(new_shape), std::move(new_stride), data_, requires_grad_);
+}
 
 template<typename real> 
 Tensor<real> Tensor<real>::reshape(std::vector<int> new_shape) const {
@@ -166,291 +234,7 @@ template<typename real>
 void Tensor<real>::fill_(real value){
     std::fill_n(data_.get(), numel_, value);
 }
-template<typename real>
-Tensor<real> operator+(real A,const Tensor<real>& B){
-    Tensor<real> output(B.shape_);
-    for(int i=0;i<B.numel_;++i) output.data_[i] = A + B.data_[i];
-    return output;
-}
 
-template<typename real>
-Tensor<real> operator+ (const Tensor<real>& A,real B){
-    Tensor<real> output(A.shape_);
-    for(int i=0;i<A.numel_;++i) output.data_[i] = B + A.data_[i];
-    return output;
-}
-template<typename real>
-Tensor<real> operator+(const Tensor<real>& A,const Tensor<real>& B){
-    
-    int a_ndim = A.shape_.size();
-    int b_ndim = B.shape_.size();
-    int max_ndim = std::max(a_ndim,b_ndim);
-    std::vector<int> output_shape;
-    output_shape.resize(max_ndim);
-    //step 1: check broadcasting and determine output_shape
-    for(int i=0;i<max_ndim;++i){
-        int a_idx = a_ndim - i - 1;
-        int b_idx = b_ndim - i - 1;
-        int a_dim = (a_idx >= 0) ? A.shape_[a_idx] : 1;
-        int b_dim = (b_idx >= 0) ? B.shape_[b_idx] : 1;
-        if(a_dim!=1 && b_dim!=1 && a_dim!=b_dim){
-            throw BroadCastingError(A.shape_,B.shape_,0,"Tensor shape mismatch when broadcasting");
-        }
-        output_shape[max_ndim - i - 1] = std::max(a_dim,b_dim);
-    }
-    //step2: addition
-    Tensor<real> output(output_shape);
-    for(int i=0;i<output.numel_;++i){
-        int res = i;
-        std::vector<int> indices_out;
-        indices_out.resize(max_ndim);
-        for(int j=0;j<max_ndim;++j){
-            if(output.stride_[j]==0) indices_out[j]=0;
-            else{indices_out[j] = res / output.stride_[j];
-            res = (res % output.stride_[j]);}
-        }
-        int i1=0,i2=0;
-        for(int j=0;j<max_ndim;++j){
-            int a_idx=0,b_idx=0;
-            a_idx = j - (max_ndim - a_ndim);
-            b_idx = j - (max_ndim - b_ndim);
-            if(a_idx >= 0 && A.shape_[a_idx] == output.shape_[j]){
-                i1 += indices_out[j] * A.stride_[a_idx];
-            }
-            if(b_idx >= 0 && B.shape_[b_idx] == output.shape_[j]){
-                i2 += indices_out[j] * B.stride_[b_idx];
-            }
-        }
-        output.data_[i] = A.data_[i1] + B.data_[i2];
-    }
-    return output;
-}
-
-template<typename real>
-Tensor<real> operator-(real A, const Tensor<real>& B){
-    Tensor<real> output(B.shape_);
-    for(int i = 0; i < B.numel_; ++i) {
-        output.data_[i] = A - B.data_[i];
-    }
-    return output;
-}
-
-template<typename real>
-Tensor<real> operator-(const Tensor<real>& A, real B){
-    Tensor<real> output(A.shape_);
-    for(int i = 0; i < A.numel_; ++i) {
-        output.data_[i] = A.data_[i] - B;
-    }
-    return output;
-}
-
-template<typename real>
-Tensor<real> operator-(const Tensor<real>& A, const Tensor<real>& B){
-    int a_ndim = A.shape_.size();
-    int b_ndim = B.shape_.size();
-    int max_ndim = std::max(a_ndim, b_ndim);
-    std::vector<int> output_shape;
-    output_shape.resize(max_ndim);
-    
-    // step 1
-    for(int i = 0; i < max_ndim; ++i){
-        int a_idx = a_ndim - i - 1;
-        int b_idx = b_ndim - i - 1;
-        int a_dim = (a_idx >= 0) ? A.shape_[a_idx] : 1;
-        int b_dim = (b_idx >= 0) ? B.shape_[b_idx] : 1;
-        
-        if(a_dim != 1 && b_dim != 1 && a_dim != b_dim){
-            // op = 1 represents subtracting
-            throw BroadCastingError(A.shape_, B.shape_, 1, "Tensor shape mismatch when broadcasting");
-        }
-        output_shape[max_ndim - i - 1] = std::max(a_dim, b_dim);
-    }
-    
-    // step 2
-    Tensor<real> output(output_shape);
-    for(int i = 0; i < output.numel_; ++i){
-        int res = i;
-        std::vector<int> indices_out;
-        indices_out.resize(max_ndim);
-        for(int j = 0; j < max_ndim; ++j){
-            if(output.stride_[j] == 0) {
-                indices_out[j] = 0;
-            } else {
-                indices_out[j] = res / output.stride_[j];
-                res = (res % output.stride_[j]);
-            }
-        }
-        
-        int i1 = 0, i2 = 0;
-        for(int j = 0; j < max_ndim; ++j){
-            int a_idx = 0, b_idx = 0;
-            a_idx = j - (max_ndim - a_ndim);
-            b_idx = j - (max_ndim - b_ndim);
-            if(a_idx >= 0 && A.shape_[a_idx] == output.shape_[j]){
-                i1 += indices_out[j] * A.stride_[a_idx];
-            }
-            if(b_idx >= 0 && B.shape_[b_idx] == output.shape_[j]){
-                i2 += indices_out[j] * B.stride_[b_idx];
-            }
-        }
-        output.data_[i] = A.data_[i1] - B.data_[i2];
-    }
-    return output;
-}
-
-template<typename real>
-Tensor<real> operator*(real A, const Tensor<real>& B){
-    Tensor<real> output(B.shape_);
-    for(int i = 0; i < B.numel_; ++i) {
-        output.data_[i] = A * B.data_[i];
-    }
-    return output;
-}
-
-template<typename real>
-Tensor<real> operator*(const Tensor<real>& A, real B){
-    Tensor<real> output(A.shape_);
-    for(int i = 0; i < A.numel_; ++i) {
-        output.data_[i] = A.data_[i] * B;
-    }
-    return output;
-}
-
-template<typename real>
-Tensor<real> operator*(const Tensor<real>& A, const Tensor<real>& B){
-    int a_ndim = A.shape_.size();
-    int b_ndim = B.shape_.size();
-    int max_ndim = std::max(a_ndim, b_ndim);
-    std::vector<int> output_shape;
-    output_shape.resize(max_ndim);
-    
-    // step 1
-    for(int i = 0; i < max_ndim; ++i){
-        int a_idx = a_ndim - i - 1;
-        int b_idx = b_ndim - i - 1;
-        int a_dim = (a_idx >= 0) ? A.shape_[a_idx] : 1;
-        int b_dim = (b_idx >= 0) ? B.shape_[b_idx] : 1;
-        
-        if(a_dim != 1 && b_dim != 1 && a_dim != b_dim){
-            // op = 2 represents element-wise-multiplying
-            throw BroadCastingError(A.shape_, B.shape_, 2, "Tensor shape mismatch when broadcasting");
-        }
-        output_shape[max_ndim - i - 1] = std::max(a_dim, b_dim);
-    }
-    
-    // step 2
-    Tensor<real> output(output_shape);
-    for(int i = 0; i < output.numel_; ++i){
-        int res = i;
-        std::vector<int> indices_out;
-        indices_out.resize(max_ndim);
-        for(int j = 0; j < max_ndim; ++j){
-            if(output.stride_[j] == 0) {
-                indices_out[j] = 0;
-            } else {
-                indices_out[j] = res / output.stride_[j];
-                res = (res % output.stride_[j]);
-            }
-        }
-        
-        int i1 = 0, i2 = 0;
-        for(int j = 0; j < max_ndim; ++j){
-            int a_idx = 0, b_idx = 0;
-            a_idx = j - (max_ndim - a_ndim);
-            b_idx = j - (max_ndim - b_ndim);
-            if(a_idx >= 0 && A.shape_[a_idx] == output.shape_[j]){
-                i1 += indices_out[j] * A.stride_[a_idx];
-            }
-            if(b_idx >= 0 && B.shape_[b_idx] == output.shape_[j]){
-                i2 += indices_out[j] * B.stride_[b_idx];
-            }
-        }
-        output.data_[i] = A.data_[i1] * B.data_[i2];
-    }
-    return output;
-}
-
-template<typename real>
-Tensor<real> operator/(real A, const Tensor<real>& B){
-    Tensor<real> output(B.shape_);
-    for(int i = 0; i < B.numel_; ++i) {
-        if(B.data_[i] == static_cast<real>(0)){
-            throw std::invalid_argument("Division by zero encountered in tensor elements");
-        }
-        output.data_[i] = A / B.data_[i];
-    }
-    return output;
-}
-
-template<typename real>
-Tensor<real> operator/(const Tensor<real>& A, real B){
-    if(B == static_cast<real>(0)){
-        throw std::invalid_argument("Division by zero encountered with scalar");
-    }
-    Tensor<real> output(A.shape_);
-    for(int i = 0; i < A.numel_; ++i) {
-        output.data_[i] = A.data_[i] / B;
-    }
-    return output;
-}
-
-template<typename real>
-Tensor<real> operator/(const Tensor<real>& A, const Tensor<real>& B){
-    int a_ndim = A.shape_.size();
-    int b_ndim = B.shape_.size();
-    int max_ndim = std::max(a_ndim, b_ndim);
-    std::vector<int> output_shape;
-    output_shape.resize(max_ndim);
-    
-    // step 1
-    for(int i = 0; i < max_ndim; ++i){
-        int a_idx = a_ndim - i - 1;
-        int b_idx = b_ndim - i - 1;
-        int a_dim = (a_idx >= 0) ? A.shape_[a_idx] : 1;
-        int b_dim = (b_idx >= 0) ? B.shape_[b_idx] : 1;
-        
-        if(a_dim != 1 && b_dim != 1 && a_dim != b_dim){
-            // op = 3 represents element-wise-dividing
-            throw BroadCastingError(A.shape_, B.shape_, 3, "Tensor shape mismatch when broadcasting");
-        }
-        output_shape[max_ndim - i - 1] = std::max(a_dim, b_dim);
-    }
-    
-    // step 2
-    Tensor<real> output(output_shape);
-    for(int i = 0; i < output.numel_; ++i){
-        int res = i;
-        std::vector<int> indices_out;
-        indices_out.resize(max_ndim);
-        for(int j = 0; j < max_ndim; ++j){
-            if(output.stride_[j] == 0) {
-                indices_out[j] = 0;
-            } else {
-                indices_out[j] = res / output.stride_[j];
-                res = (res % output.stride_[j]);
-            }
-        }
-        
-        int i1 = 0, i2 = 0;
-        for(int j = 0; j < max_ndim; ++j){
-            int a_idx = 0, b_idx = 0;
-            a_idx = j - (max_ndim - a_ndim);
-            b_idx = j - (max_ndim - b_ndim);
-            if(a_idx >= 0 && A.shape_[a_idx] == output.shape_[j]){
-                i1 += indices_out[j] * A.stride_[a_idx];
-            }
-            if(b_idx >= 0 && B.shape_[b_idx] == output.shape_[j]){
-                i2 += indices_out[j] * B.stride_[b_idx];
-            }
-        }
-        
-        if(B.data_[i2] == static_cast<real>(0)){
-            throw std::invalid_argument("Division by zero encountered in tensor elements");
-        }
-        output.data_[i] = A.data_[i1] / B.data_[i2];
-    }
-    return output;
-}
 
 template<typename real>
 ostream & operator<< (ostream & os,const Tensor<real>& t){
@@ -532,4 +316,7 @@ Tensor<real>::Tensor(const std::vector<int> & shape,bool requires_grad){
 
 }
 }
+
+#include"Tensor/TensorBinaryOps.hpp"
+#include"Tensor/TensorUnaryOps.hpp"
 #endif
