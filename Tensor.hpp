@@ -99,6 +99,35 @@ public:
     void fill_(real value);
 };
 template<typename real>
+Tensor<real> Tensor<real>::contiguous() const{
+    if(is_contiguous()) return *this;
+
+    Tensor<real> output(shape_, requires_grad_);
+
+    int ndim = static_cast<int>(shape_.size());
+    if(ndim==0){
+        output.data_[0] = data_[0];
+        return output;
+    }
+    std::vector<int> curr_indices(ndim,0);
+    int old_offset=0,new_offset=0;
+    while(new_offset < numel_){
+        output.data_[new_offset++] = data_[old_offset];
+        for(int d = ndim-1;d>=0;--d){
+            ++curr_indices[d];
+            if(curr_indices[d] < shape_[d]){
+                old_offset += stride_[d];
+                break;
+            } else {
+                old_offset -= stride_[d] * shape_[d];
+                curr_indices[d] = 0;
+            }
+        }
+    }
+    return output;
+}
+
+template<typename real>
 bool Tensor<real>::is_contiguous() const{
     int ndim = static_cast<int>(shape_.size());
     if(ndim==0) return true;
