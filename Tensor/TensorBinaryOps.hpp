@@ -1,5 +1,19 @@
 #pragma once
 namespace torch{
+template<typename real>
+ostream & operator<< (ostream & os,const Tensor<real>& t){
+    os << "tensor(";
+    
+    t.print_recursive(os, 0, 0);
+    
+    os << ", shape=[";
+    for (size_t i = 0; i < t.shape_.size(); ++i) {
+        os << t.shape_[i] << (i == t.shape_.size() - 1 ? "" : ", ");
+    }
+    os << "])";
+    return os;
+}
+
 
 template<typename real>
 Tensor<real> operator+(real A,const Tensor<real>& B){
