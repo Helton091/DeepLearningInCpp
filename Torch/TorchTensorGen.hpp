@@ -10,53 +10,58 @@ inline std::mt19937& get_generator(){
     return generator;
 }
 
-inline void manual_seed(unsigned int seed){return get_generator().seed(seed);}
+inline void manual_seed(unsigned int seed){get_generator().seed(seed);}
 
-template<typename real>
-Tensor<real> rand_like(const Tensor<real>& other,bool requires_grad=false){
-    return rand(other.shape(),requires_grad);
-}
-template<typename real>
-Tensor<real> randn_like(const Tensor<real>& other,bool requires_grad=false){
-    return randn(other.shape(),requires_grad);
-}
-template<typename real>
+template<typename real = float>
+Tensor<real> rand_like(const Tensor<real>& other,bool requires_grad=false);
+template<typename real = float>
+Tensor<real> randn_like(const Tensor<real>& other,bool requires_grad=false);
+template<typename real = float>
 Tensor<real> rand(const std::vector<int>& shape,bool requires_grad=false);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> randn(const std::vector<int>& shape,bool requires_grad=false);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> arange_impl(double start,double end,double step);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> arange(double end);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> arange(double start,double end);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> arange(double start,double end,double step);
-template<typename real>
+template<typename real = float>
 Tensor<real> ones(const std::vector<int>& shape,bool requires_grad = false);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> zeros(const std::vector<int>& shape,bool requires_grad = false);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> full(const std::vector<int>& shape,real fill_value,bool requires_grad=false);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> ones_like(const Tensor<real>& other,bool requires_grad=false);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> zeros_like(const Tensor<real>& other,bool requires_grad=false);
 
-template<typename real>
+template<typename real = float>
 Tensor<real> full_like(const Tensor<real>& t,real fill_value,bool requires_grad=false);
 }
 
 namespace torch{
+template<typename real>
+Tensor<real> rand_like(const Tensor<real>& other,bool requires_grad){
+    return rand<real>(other.shape(),requires_grad);
+}
+
+template<typename real>
+Tensor<real> randn_like(const Tensor<real>& other,bool requires_grad){
+    return randn<real>(other.shape(),requires_grad);
+}
 
 template<typename real>
 Tensor<real> rand(const std::vector<int>& shape,bool requires_grad){

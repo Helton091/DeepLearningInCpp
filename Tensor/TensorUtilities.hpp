@@ -86,6 +86,10 @@ Tensor<real>::Tensor(const std::vector<int>& shape,std::vector<int>& stride,std:
     stride_ = stride;
     data_ = shared_data;
     requires_grad_ = requires_grad;
+    numel_ = 1;
+    for(int s : shape_) {
+        numel_ *= s;
+    }
 }
 
 

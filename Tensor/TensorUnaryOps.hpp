@@ -1,6 +1,72 @@
 #pragma once
 namespace torch{
 template<typename real> 
+Tensor<real> Tensor<real>::unsqueeze(int dim) const { 
+    int ndim = static_cast<int>(shape_.size()); 
+    
+    int real_dim = dim < 0 ? dim + ndim + 1 : dim; 
+    
+    if (real_dim < 0 || real_dim > ndim) {
+        throw std::out_of_range("index out of range when unsqueezing"); 
+    }
+
+    std::vector<int> new_shape = shape_; 
+    std::vector<int> new_stride = stride_; 
+    
+    
+    new_shape.insert(new_shape.begin() + real_dim, 1); 
+
+   
+    int new_stride_val = 1; 
+    if (real_dim < ndim) {
+        new_stride_val = shape_[real_dim] * stride_[real_dim];
+    }
+    
+    new_stride.insert(new_stride.begin() + real_dim, new_stride_val); 
+    
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad_); 
+} 
+
+template<typename real>
+Tensor<real> Tensor<real>::squeeze() const{
+    int ndim_ori = static_cast<int>(shape_.size());
+    int ndim_curr = ndim_ori;
+    bool requires_squeeze = false;
+    for(int i=0;i<ndim_ori;++i){
+        if(shape_[i]==1){
+            requires_squeeze = true;
+            --ndim_curr;
+        }
+    }
+    if(!requires_squeeze) return *this;
+    std::vector<int> new_shape(ndim_curr),new_stride(ndim_curr);
+    int j=0;
+    for(int i=0;i<ndim_curr;++i,++j){
+        while(shape_[j]==1) ++j;
+        new_shape[i] = shape_[j];
+        new_stride[i] = stride_[j];
+    }
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad_);
+
+}
+
+
+template<typename real>
+Tensor<real> Tensor<real>::squeeze(int dim) const{
+    int ndim = static_cast<int>(shape_.size());
+    if(dim < 0) dim += ndim;
+    if(dim < 0 || dim>=ndim) throw std::out_of_range("index out of range when squeezing");
+    if(shape_[dim] != 1) return *this;
+
+    std::vector<int> new_shape = shape_;
+    std::vector<int> new_stride = stride_;
+
+    new_shape.erase(new_shape.begin() + dim);
+    new_stride.erase(new_stride.begin()+ dim);
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad_);
+}
+
+template<typename real> 
 Tensor<real> Tensor<real>::reshape(std::vector<int> new_shape) const {
     int minus_one_index = -1; 
     int curr_numel = 1; 
@@ -33,7 +99,7 @@ Tensor<real> Tensor<real>::reshape(std::vector<int> new_shape) const {
         throw std::invalid_argument("unable to reshape due to numel mismatch"); 
     }
 
-    Tensor<real> output(std::move(new_shape), data_, requires_grad_); 
+    Tensor<real> output(new_shape, data_, requires_grad_); 
     return output; 
 } 
 
@@ -59,7 +125,7 @@ Tensor<real> Tensor<real>::permute(std::vector<int> dims) const{
         new_shape[i] = shape_[dims[i]];
         new_stride[i] = stride_[dims[i]];
     }
-    return Tensor<real>(std::move(new_shape),std::move(new_stride),data_,requires_grad_);
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad_);
 }
 
 template<typename real>
@@ -78,7 +144,7 @@ Tensor<real> Tensor<real>::transpose(int dim0, int dim1) const{
     std::swap(new_shape[dim0],new_shape[dim1]);
     std::swap(new_stride[dim0],new_stride[dim1]);
     
-    return Tensor<real>(std::move(new_shape), std::move(new_stride), data_, requires_grad_);
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad_);
 }
 
 template<typename real>
@@ -102,7 +168,7 @@ Tensor<real> Tensor<real>::contiguous() const{
                 old_offset += stride_[d];
                 break;
             } else {
-                old_offset -= stride_[d] * shape_[d];
+                old_offset -= stride_[d] * (shape_[d]-1);
                 curr_indices[d] = 0;
             }
         }

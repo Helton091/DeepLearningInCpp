@@ -79,6 +79,10 @@ public:
     
     Tensor(const std::vector<int>& shape,bool requires_grad = false);
     Tensor(Tensor&& other) noexcept = default;
+    Tensor(const Tensor& other) = default;
+    Tensor& operator=(const Tensor& other) = default;
+    Tensor& operator=(Tensor&& other) noexcept = default;
+    
     //Tensor/TensorBinaryOps.hpp
     friend ostream & operator<< <>(ostream & os,const Tensor<real>& t);
     friend Tensor<real> operator+ <>(const Tensor<real>& A,const Tensor<real>& B);
@@ -98,7 +102,9 @@ public:
     Tensor<real> transpose(int dim0, int dim1) const;
     Tensor<real> permute(std::vector<int> dims) const;
     Tensor<real> contiguous() const; //return a new tensor with decreasing stride
-    
+    Tensor<real> squeeze(int dim) const;
+    Tensor<real> squeeze() const;
+    Tensor<real> unsqueeze(int dim) const;
 };
 }
 
