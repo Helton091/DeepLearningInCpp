@@ -1,5 +1,70 @@
 #pragma once
 namespace torch{
+template<typename real>
+Tensor<real> Tensor<real>::sum(int dim,bool keep_dim){
+    int ndim = shape_.size();
+    if (ndim == 0) {
+        if (dim != 0 && dim != -1) {
+            throw std::out_of_range("Dimension out of range (expected to be in range of [-1, 0] ...)");
+        }
+        Tensor<real> output({}, requires_grad());
+        output.data_ptr()[0] = data_[0];
+        return output;
+    }
+    if(dim < 0) dim += ndim;
+    if(dim < 0 || dim >= ndim) throw std::out_of_range("index out of bounds when calling Tensor::sum");
+    if(keep_dim){
+        std::vector<int> new_shape(ndim);
+        for(int i=0;i<ndim;++i){
+            if(i==dim) new_shape[i] = 1;
+            else new_shape[i] = shape_[i];
+        }
+        Tensor<real> output(new_shape,requires_grad());
+        output.fill_(static_cast<real>(0.0));
+        std::vector<int> old_shape_indices(ndim,0);
+        for(int i=0;i<numel_;++i){
+            int output_offset = 0;
+            int curr_offset = 0;
+            for(int j=0;j<ndim;++j){
+                if(j!=dim) output_offset += old_shape_indices[j] * output.stride_[j];
+                curr_offset += old_shape_indices[j] * stride_[j];
+            }
+            output.data_[output_offset] += data_[curr_offset];
+            for(int j=ndim-1;j>=0;--j){
+                ++old_shape_indices[j];
+                if(old_shape_indices[j] < shape_[j]) break;
+                else old_shape_indices[j] = 0;
+            }
+        }
+        return output;
+    } else {
+        std::vector<int> new_shape(ndim - 1);
+        int temp_idx = 0;
+        for(int i=0;i<ndim;++i){
+            if(i!=dim) new_shape[temp_idx++] = shape_[i];
+        }
+        Tensor<real> output(new_shape,requires_grad());
+        output.fill_(static_cast<real>(0.0));
+        std::vector<int> old_shape_indices(ndim,0);
+        for(int i=0;i<numel_;++i){
+            int output_offset = 0;
+            int curr_offset = 0;
+            for(int j=0;j<ndim;++j){
+                if(j<dim) output_offset += old_shape_indices[j] * output.stride_[j];
+                if(j>dim) output_offset += old_shape_indices[j] * output.stride_[j-1];
+                curr_offset += old_shape_indices[j] * stride_[j];
+            }
+            output.data_[output_offset] += data_[curr_offset];
+            for(int j=ndim-1;j>=0;--j){
+                ++old_shape_indices[j];
+                if(old_shape_indices[j] < shape_[j]) break;
+                else old_shape_indices[j] = 0;
+            }
+        }
+        return output;
+    }
+}
+
 template<typename real> 
 Tensor<real> Tensor<real>::unsqueeze(int dim) const { 
     int ndim = static_cast<int>(shape_.size()); 
@@ -24,7 +89,7 @@ Tensor<real> Tensor<real>::unsqueeze(int dim) const {
     
     new_stride.insert(new_stride.begin() + real_dim, new_stride_val); 
     
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad_); 
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad()); 
 } 
 
 template<typename real>
@@ -46,7 +111,7 @@ Tensor<real> Tensor<real>::squeeze() const{
         new_shape[i] = shape_[j];
         new_stride[i] = stride_[j];
     }
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad_);
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad());
 
 }
 
@@ -63,7 +128,7 @@ Tensor<real> Tensor<real>::squeeze(int dim) const{
 
     new_shape.erase(new_shape.begin() + dim);
     new_stride.erase(new_stride.begin()+ dim);
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad_);
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad());
 }
 
 template<typename real> 
@@ -99,7 +164,7 @@ Tensor<real> Tensor<real>::reshape(std::vector<int> new_shape) const {
         throw std::invalid_argument("unable to reshape due to numel mismatch"); 
     }
 
-    Tensor<real> output(new_shape, data_, requires_grad_); 
+    Tensor<real> output(new_shape, data_, requires_grad()); 
     return output; 
 } 
 
@@ -125,7 +190,7 @@ Tensor<real> Tensor<real>::permute(std::vector<int> dims) const{
         new_shape[i] = shape_[dims[i]];
         new_stride[i] = stride_[dims[i]];
     }
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad_);
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad());
 }
 
 template<typename real>
@@ -144,14 +209,14 @@ Tensor<real> Tensor<real>::transpose(int dim0, int dim1) const{
     std::swap(new_shape[dim0],new_shape[dim1]);
     std::swap(new_stride[dim0],new_stride[dim1]);
     
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad_);
+    return Tensor<real>(new_shape, new_stride, data_, requires_grad());
 }
 
 template<typename real>
 Tensor<real> Tensor<real>::contiguous() const{
     if(is_contiguous()) return *this;
 
-    Tensor<real> output(shape_, requires_grad_);
+    Tensor<real> output(shape_, requires_grad());
 
     int ndim = static_cast<int>(shape_.size());
     if(ndim==0){

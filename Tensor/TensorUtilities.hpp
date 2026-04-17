@@ -1,4 +1,5 @@
 #pragma once
+#include"../Torch/AutoGrad/AutoGrad.hpp"
 namespace torch{
 template<typename real>
 void Tensor<real>::print_recursive(std::ostream& os, int dim_index, int current_offset) const {
@@ -60,9 +61,10 @@ void Tensor<real>::init_metadata(){
 template<typename real>
 Tensor<real>::Tensor(const std::vector<int> & shape,bool requires_grad){
     shape_ = shape;
-    requires_grad_ = requires_grad;
     init_metadata();
     data_ = std::shared_ptr<real []>(new real[numel_]);
+    autograd_meta_ = std::make_shared<AutogradMeta<real>>();
+    autograd_meta_->requires_grad = requires_grad;
 
 }
 
@@ -85,11 +87,12 @@ Tensor<real>::Tensor(const std::vector<int>& shape,std::vector<int>& stride,std:
     shape_ = shape;
     stride_ = stride;
     data_ = shared_data;
-    requires_grad_ = requires_grad;
     numel_ = 1;
     for(int s : shape_) {
         numel_ *= s;
     }
+    autograd_meta_ = std::make_shared<AutogradMeta<real>>();
+    autograd_meta_->requires_grad = requires_grad;
 }
 
 
@@ -99,7 +102,8 @@ Tensor<real>::Tensor(const std::vector<int>& shape,std::shared_ptr<real[]> share
     shape_ = shape;
     data_ = shared_data;
     init_metadata();
-    requires_grad_ = requires_grad;
+    autograd_meta_ = std::make_shared<AutogradMeta<real>>();
+    autograd_meta_->requires_grad = requires_grad;
 }
 
 string BroadCastingError::build_message(const std::vector<int>& shape1,const std::vector<int>& shape2,int op,const string& str){

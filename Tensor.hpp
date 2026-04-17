@@ -18,6 +18,12 @@ private:
 template<typename real>
 class Tensor;
 
+template<typename real>
+class BackwardFunction;
+
+template<typename real>
+struct AutogradMeta;
+
 template<typename real>                  
 std::ostream& operator<<(std::ostream& os, const Tensor<real>& t);
 
@@ -59,17 +65,18 @@ Tensor<real> operator/ (real A,const Tensor<real>& B);
 template<typename real>
 class Tensor{
 private:
-    std::shared_ptr<real []> data_; 
+    std::shared_ptr<real []> data_ = nullptr; 
     std::vector<int> stride_; //how to fetch element in data_
     std::vector<int> shape_; 
-    size_t numel_; //total element
-    bool requires_grad_;
+    size_t numel_ = 0; //total element
+    std::shared_ptr<AutogradMeta<real>> autograd_meta_ = nullptr;
     //Tensor/TensorUtilities.hpp
     void print_recursive(std::ostream& os, int dim_index, int current_offset) const;
     void init_metadata(); //shape_ -> stride_ + numel_
     Tensor(const std::vector<int>& shape,std::shared_ptr<real[]> shared_data,bool requires_grad);
     Tensor(const std::vector<int>& shape,std::vector<int>& stride,std::shared_ptr<real []> shared_data,bool requires_grad);
 public:
+    Tensor() = default; // REQUIRED for AutogradMeta default construction
     size_t numel() const noexcept{return numel_;}
     const real* data_ptr() const{return data_.get();}
     real* data_ptr(){return data_.get();}
@@ -77,7 +84,7 @@ public:
     void fill_(real value);
     bool is_contiguous() const;
     const std::vector<int>& stride()const noexcept{return stride_;}
-    bool requires_grad() const noexcept{return requires_grad_;}
+    bool requires_grad() const noexcept{ return autograd_meta_ && autograd_meta_->requires_grad;}
 
     Tensor(const std::vector<int>& shape,bool requires_grad = false);
     Tensor(Tensor&& other) noexcept = default;
@@ -108,10 +115,21 @@ public:
     Tensor<real> squeeze(int dim) const;
     Tensor<real> squeeze() const;
     Tensor<real> unsqueeze(int dim) const;
+    Tensor<real> sum(int dim,bool keep_dim=false);
+
+    // Torch\TorchBackwardFunctions.hpp
+    bool is_leaf();
+    std::shared_ptr<BackwardFunction<real>> grad_fn();
+    void add_grad(const Tensor<real>& g);
+    Tensor<real> grad();
+    void set_grad_fn(const BackwardFunction<real>& fn);
+    void backward();
 };
 }
 
 #include"Tensor/TensorUtilities.hpp"
 #include"Tensor/TensorBinaryOps.hpp"
 #include"Tensor/TensorUnaryOps.hpp"
+#include"Torch/AutoGrad/TorchBackwardFunctions.hpp"
+#include"Torch/AutoGrad/AutoGrad.hpp"
 #endif
