@@ -1,6 +1,11 @@
 #pragma once
 namespace torch{
 template<typename real>
+Tensor<real> Tensor<real>::matmal(const Tensor<real>& other){
+    
+}
+
+template<typename real>
 ostream & operator<< (ostream & os,const Tensor<real>& t){
     os << "tensor(";
     

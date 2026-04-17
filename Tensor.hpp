@@ -76,7 +76,9 @@ public:
     const std::vector<int>& shape()const noexcept{return shape_;}
     void fill_(real value);
     bool is_contiguous() const;
-    
+    const std::vector<int>& stride()const noexcept{return stride_;}
+    bool requires_grad() const noexcept{return requires_grad_;}
+
     Tensor(const std::vector<int>& shape,bool requires_grad = false);
     Tensor(Tensor&& other) noexcept = default;
     Tensor(const Tensor& other) = default;
@@ -97,6 +99,7 @@ public:
     friend Tensor<real> operator/ <>(const Tensor<real>& A,const Tensor<real>& B);
     friend Tensor<real> operator/ <>(const Tensor<real>& A,real B);
     friend Tensor<real> operator/ <>(real A,const Tensor<real>& B);
+    Tensor<real> matmal(const Tensor<real>& other);
     //Tensor/TensorUnaryOps.hpp
     Tensor<real> reshape(std::vector<int> new_shape) const;
     Tensor<real> transpose(int dim0, int dim1) const;
