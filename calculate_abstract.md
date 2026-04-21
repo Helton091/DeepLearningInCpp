@@ -2,30 +2,123 @@
 
 ## 1. 算法视角：PyTorch 底层计算图的运行逻辑 (Algorithm Perspective)
 
-在深度学习中，当我们写下 `loss.backward()` 时，底层到底发生了什么？让我们抛开代码，先从纯算法的角度，像剥洋葱一样看清计算图（Computational Graph）的生命周期。它分为三个核心阶段：
+为了让你彻底看清这套机制，我们用一个最经典的具体例子来做沙盘推演。
+**假设我们要优化的数学模型是：$L = (A \times X + B) \times 2$**
+- **$X$**：输入数据，不需要求导（`requires_grad=false`）。
+- **$A$, $B$**：模型权重，需要求导（`requires_grad=true`），它们是**叶子节点（Leaf Tensors）**。
+- 我们分步执行前向代码：
+  1. `M = A * X` (矩阵乘法)
+  2. `Y = M + B` (加法，带有广播)
+  3. `L = Y * 2` (标量乘法)
 
 ### 阶段一：前向传播与“埋点”（Forward Pass & Graph Construction）
-当你执行 $C = A + B$ 时，系统不仅算出了 $C$ 的数值，还在后台偷偷画了一张有向无环图（DAG）：
-1. **创建节点**：系统会创建一个代表“加法求导”的节点（比如叫 `AddBackward`）。
-2. **记录输入**：这个节点会把 $A$ 和 $B$ 的引用（或者计算梯度必需的中间变量）死死攥在手里。
-3. **连接边**：系统把 $C$ 标记为由 `AddBackward` 创造出来的。
-4. **叶子节点**：像 $A$ 和 $B$ 这种由用户直接创建、需要求导的张量，被称为“叶子节点（Leaf Tensors）”。它们没有创造者。
+当你的 C++ 代码依次执行这三行时，底层不仅在算数字，还在搭建下面这张 DAG（有向无环图）：
+
+1. **算 `M = A * X` 时**：
+   - 因为 $A$ 需要求导，所以输出 $M$ 也被传染了 `requires_grad=true`。
+   - 系统 `new` 了一个节点 `MatmulBackward`。
+   - `MatmulBackward` 偷偷保存了 $A$ 和 $X$ 的指针（或者副本），因为将来算偏导时要用到。
+   - $M$ 的 `grad_fn` 指针，指向了这个 `MatmulBackward`。
+
+2. **算 `Y = M + B` 时**：
+   - 系统 `new` 了一个节点 `AddBackward`。
+   - `AddBackward` 偷偷保存了 $M$ 和 $B$ 的指针。
+   - $Y$ 的 `grad_fn` 指针，指向了这个 `AddBackward`。
+
+3. **算 `L = Y * 2` 时**：
+   - 系统 `new` 了一个节点 `MulScalarBackward`。
+   - `MulScalarBackward` 偷偷保存了 $Y$ 的指针，并记下了常数 `2`。
+   - $L$ 的 `grad_fn` 指针，指向了这个 `MulScalarBackward`。
+
+**此时，计算图已经建好了！它的形状像一根链条：**
+`L` $\rightarrow$ `MulScalarBackward` $\rightarrow$ `Y` $\rightarrow$ `AddBackward` $\rightarrow$ `M` $\rightarrow$ `MatmulBackward` $\rightarrow$ `A`
 
 ### 阶段二：拓扑排序（Topological Sort）
-当用户对最终的标量 $L$ 调用 `L.backward()` 时，系统首先面临一个数学危机：多条路径的梯度如何正确累加？
-例如：$D = A \times 2$, $E = A + 3$, $L = D + E$。
-如果系统先算 $D$ 给 $A$ 的梯度，直接把梯度加给 $A$，这没问题。但此时 $A$ 还没收到 $E$ 传来的梯度！如果此时 $A$ 觉得自己梯度已经算完了，去触发了别的东西，那就全错了。
-**解法**：系统必须从 $L$ 开始，逆向遍历整张图，计算每个节点的“入度”（即它有多少个子节点）。只有当一个节点收齐了**所有**子节点传来的梯度后，它才能把自己激活，去算传给上一层的梯度。这就是拓扑排序。
+当你执行 `L.backward()` 时，Autograd 引擎启动。
+在这个简单的线性例子里，拓扑排序的顺序就是沿着 `grad_fn` 一路往回找：
+1. `MulScalarBackward`
+2. `AddBackward`
+3. `MatmulBackward`
+
+*(注：如果你的网络有像 ResNet 里的 Skip Connection 分支，比如 $Y = M + M$，那么 $M$ 会被两个节点依赖，拓扑排序就会确保 $M$ 必须等这两个节点都把梯度传过来之后，才把自己激活向下传。)*
 
 ### 阶段三：反向传播与链式法则（Backward Pass & Chain Rule）
-引擎按照拓扑排序的顺序，依次激活每个 `Backward` 节点。
-当 `AddBackward` (创造了 $C$) 被激活时，它会收到上一层传来的 $\frac{\partial L}{\partial C}$（我们称之为 `grad_output`）。
-它的任务只有两个：
-1. **算局部偏导**：加法对 $A$ 和 $B$ 的局部偏导都是 1。
-2. **应用链式法则**：用 `grad_output` $\times$ 局部偏导，算出传给 $A$ 的梯度（$\frac{\partial L}{\partial A}$）和传给 $B$ 的梯度（$\frac{\partial L}{\partial B}$）。
-3. **分发**：把算出来的梯度，累加到 $A$ 和 $B$ 的 `.grad` 属性中。
+引擎开始按照拓扑排序的顺序，依次激活节点，并传递梯度（`grad_output`）。
+一开始，系统强行给终点 $L$ 生成一个全是 `1.0` 的初始梯度 $\frac{\partial L}{\partial L}$，作为第一棒传下去。
 
-这就是整个 Autograd 的宏观算法！
+1. **激活 `MulScalarBackward` (它手里的 `grad_output` 是 `1.0`)**
+   - 它的数学逻辑是 $L = Y \times 2$，所以对 $Y$ 的局部偏导 $\frac{\partial L}{\partial Y} = 2$。
+   - 链式法则：它算出的传递梯度 = `grad_output` $\times$ 局部偏导 = `1.0 * 2 = 2.0`。
+   - 它把这块全是 `2.0` 的梯度，丢给它手里攥着的 $Y$。
+
+2. **激活 `AddBackward` (它手里的 `grad_output` 是刚收到的 `2.0`)**
+   - 它的数学逻辑是 $Y = M + B$，对 $M$ 和 $B$ 的局部偏导都是 `1`。
+   - 链式法则传给 $M$：`grad_output * 1 = 2.0`。把它丢给 $M$。
+   - 链式法则传给 $B$：`grad_output * 1 = 2.0`。
+   - **关键拦截**：因为 $B$ 是叶子节点，系统直接把这块 `2.0` 的梯度累加到 `B.grad` 里！至此，$B$ 的梯度计算大功告成！
+
+3. **激活 `MatmulBackward` (它手里的 `grad_output` 也是 `2.0`)**
+   - 它的数学逻辑是 $M = A \times X$。
+   - 链式法则传给 $A$：根据矩阵求导法则，$\frac{\partial L}{\partial A} = \text{grad\_output} \times X^T$。
+   - 它用手里攥着的 $X$ 的转置去乘以 `2.0` 的梯度，算出一块新矩阵。
+   - 因为 $A$ 是叶子节点，它把这块新矩阵累加到 `A.grad` 里。
+   - 传给 $X$ 呢？因为一开始 $X$ 设置了 `requires_grad=false`，引擎一看，直接丢弃，不浪费算力。
+
+**至此，引擎停机，`A.grad` 和 `B.grad` 完美生成！这就是 Autograd 的全部魔法。**
+
+---
+
+## 3. 当前项目实装架构与开发路线图 (Current Implementation Roadmap)
+
+基于你当前实际的 C++ 代码结构，我们重新梳理了目前的架构分布。这与之前抽象的教程稍有不同，你的文件拆分更加细化（比如抽离了 `TorchBackwardFunctions.hpp`），这是非常好的底层工程实践。
+
+### 3.1 当前文件结构与组件分布
+
+1. **`Tensor.hpp` (核心声明)**
+   - 包含 `AutogradMeta` 和 `BackwardFunction` 的前向声明。
+   - `Tensor` 类新增了 `autograd_meta_` 指针。
+   - 声明了相关的 Autograd 接口：`grad()`, `add_grad()`, `grad_fn()`, `set_grad_fn()`, `is_leaf()`, `backward()`。
+
+2. **`Torch/AutoGrad/AutoGrad.hpp` (自动微分基础数据结构)**
+   - 定义了 `AutogradMeta` 结构体（包含 `grad`, `has_grad`, `grad_fn`, `is_lead`, `requires_grad`）。
+   - **[已完成 ✅]** 实现了核心反向广播降维算子 `unbroadcast`。
+
+3. **`Tensor/TensorUnaryOps.hpp` (一元操作)**
+   - **[已完成 ✅]** 实现了 `sum(int dim, bool keep_dim)`，这是 `unbroadcast` 的基石。
+
+4. **`Torch/AutoGrad/TorchBackwardFunctions.hpp` (反向节点与接口实现)**
+   - 定义了 `BackwardFunction` 基类。
+   - 定义了具体的加法操作节点 `AddBackward`（目前只有构造函数）。
+   - 实现了 `Tensor` 类的 Autograd 接口（如 `is_leaf()`, `grad_fn()`, `grad()`）。
+
+---
+
+### 3.2 接下来需要手敲的路线图 (Next Steps for Tensor Addition)
+
+为了让加法（`A + B`）的计算图真正跑起来，你需要按顺序完成以下任务，建议你对照着去修改代码：
+
+#### Step 1: 完善 `Tensor` 的 Autograd 接口实现 (`TorchBackwardFunctions.hpp`)
+你目前只实现了几个接口，且有些许瑕疵，需要修复和补全：
+- **`is_leaf()` 的修复**：目前返回的是 `requires_grad`，这是不对的。应该返回 `autograd_meta_->is_lead` (另外，建议你在 `AutoGrad.hpp` 里把 `is_lead` 拼写更正为 `is_leaf`)。
+- **`set_grad_fn()` 的签名与实现**：在 `Tensor.hpp` 中，你声明的是 `void set_grad_fn(const BackwardFunction<real>& fn);`。它应该改为接收智能指针：`void set_grad_fn(std::shared_ptr<BackwardFunction<real>> fn);`。并在实现中，将 `autograd_meta_->is_leaf` 设为 `false`。
+- **`add_grad()` 的实现**：接收梯度 `g`。如果 `has_grad == false`，那么 `grad = g` 且 `has_grad = true`；如果已经有梯度了，那么 `grad = grad + g`。
+- **`backward()` 的空壳**：暂时留空，或者只打印一行 "backward called"，留到最后再写。
+
+#### Step 2: 实现 `AddBackward::apply` (`TorchBackwardFunctions.hpp`)
+在 `AddBackward` 类中，重写 `apply` 方法：
+- 调用你已完成的 `unbroadcast(grad_output, tensor_a_.shape())`。
+- 将 unbroadcast 后的结果，传给 `tensor_a_.add_grad(...)` 和 `tensor_b_.add_grad(...)`。
+
+#### Step 3: 前向操作的“埋点建图” (`TensorBinaryOps.hpp`)
+去找到你写好的 `operator+` 函数。
+- 算完数值 `output` 之后，检查 `A.requires_grad()` 或 `B.requires_grad()`。
+- 如果为 true，需要为 `output` 初始化一个 `AutogradMeta`（你可以写个辅助函数或者直接分配）。
+- `new` 一个 `AddBackward` 节点。
+- 用 `output.set_grad_fn(grad_fn)` 把节点塞进 `output`。
+
+#### Step 4: 编写拓扑排序与 `backward()` 引擎 (`TorchBackwardFunctions.hpp`)
+- 在真正实现 `Tensor::backward()` 时，你需要用一个队列/栈进行图的遍历。
+- 确保子节点的梯度全部收集完毕后，再调用 `grad_fn->apply(grad())` 向下传递。
 
 ---
 

@@ -1,6 +1,13 @@
 #pragma once
 #include"../Torch/AutoGrad/AutoGrad.hpp"
 namespace torch{
+
+template<typename real>
+void Tensor<real>::set_requires_grad(bool require){
+    if(!autograd_meta_) autograd_meta_ = std::make_shared<AutogradMeta<real>>();
+    autograd_meta_ -> requires_grad = true;
+}
+
 template<typename real>
 void Tensor<real>::print_recursive(std::ostream& os, int dim_index, int current_offset) const {
     

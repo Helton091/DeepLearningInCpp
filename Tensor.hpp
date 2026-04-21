@@ -85,6 +85,7 @@ public:
     bool is_contiguous() const;
     const std::vector<int>& stride()const noexcept{return stride_;}
     bool requires_grad() const noexcept{ return autograd_meta_ && autograd_meta_->requires_grad;}
+    void set_requires_grad(bool require);
 
     Tensor(const std::vector<int>& shape,bool requires_grad = false);
     Tensor(Tensor&& other) noexcept = default;
@@ -115,14 +116,14 @@ public:
     Tensor<real> squeeze(int dim) const;
     Tensor<real> squeeze() const;
     Tensor<real> unsqueeze(int dim) const;
-    Tensor<real> sum(int dim,bool keep_dim=false);
+    Tensor<real> sum(int dim,bool keep_dim=false) const;
 
     // Torch\TorchBackwardFunctions.hpp
-    bool is_leaf();
-    std::shared_ptr<BackwardFunction<real>> grad_fn();
+    bool is_leaf() const;
+    std::shared_ptr<BackwardFunction<real>> grad_fn() const;
     void add_grad(const Tensor<real>& g);
-    Tensor<real> grad();
-    void set_grad_fn(const BackwardFunction<real>& fn);
+    Tensor<real> grad() const;
+    void set_grad_fn(std::shared_ptr<BackwardFunction<real>> fn);
     void backward();
 };
 }

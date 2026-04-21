@@ -1,7 +1,7 @@
 #pragma once
 namespace torch{
 template<typename real>
-Tensor<real> Tensor<real>::sum(int dim,bool keep_dim){
+Tensor<real> Tensor<real>::sum(int dim,bool keep_dim) const{
     int ndim = shape_.size();
     if (ndim == 0) {
         if (dim != 0 && dim != -1) {

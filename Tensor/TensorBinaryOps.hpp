@@ -24,6 +24,11 @@ template<typename real>
 Tensor<real> operator+(real A,const Tensor<real>& B){
     Tensor<real> output(B.shape_);
     for(int i=0;i<B.numel_;++i) output.data_[i] = A + B.data_[i];
+    if(B.requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<AddBackwardScaler<real>> grad_fn = std::make_shared<AddBackwardScaler<real>>(B);
+        output.set_grad_fn(grad_fn);
+    }
     return output;
 }
 
@@ -31,6 +36,11 @@ template<typename real>
 Tensor<real> operator+ (const Tensor<real>& A,real B){
     Tensor<real> output(A.shape_);
     for(int i=0;i<A.numel_;++i) output.data_[i] = B + A.data_[i];
+    if(A.requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<AddBackwardScaler<real>> grad_fn = std::make_shared<AddBackwardScaler<real>>(A);
+        output.set_grad_fn(grad_fn);
+    }
     return output;
 }
 template<typename real>
@@ -76,6 +86,11 @@ Tensor<real> operator+(const Tensor<real>& A,const Tensor<real>& B){
             }
         }
         output.data_[i] = A.data_[i1] + B.data_[i2];
+    }
+    if(A.requires_grad() || B.requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<AddBackward<real>> grad_fn = std::make_shared<AddBackward<real>>(A,B);
+        output.set_grad_fn(grad_fn);
     }
     return output;
 }
