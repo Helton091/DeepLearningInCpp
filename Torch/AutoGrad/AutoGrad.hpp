@@ -1,5 +1,8 @@
 #pragma once
 #include"../../Torch.hpp"
+#include<unordered_map>
+#include<unordered_set>
+#include<queue>
 namespace torch{
 
 template<typename real = float>

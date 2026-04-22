@@ -116,9 +116,46 @@
 - `new` 一个 `AddBackward` 节点。
 - 用 `output.set_grad_fn(grad_fn)` 把节点塞进 `output`。
 
-#### Step 4: 编写拓扑排序与 `backward()` 引擎 (`TorchBackwardFunctions.hpp`)
-- 在真正实现 `Tensor::backward()` 时，你需要用一个队列/栈进行图的遍历。
-- 确保子节点的梯度全部收集完毕后，再调用 `grad_fn->apply(grad())` 向下传递。
+#### Step 4: 编写拓扑排序与 `backward()` 引擎 (The Topological Sort Engine)
+
+**为什么不能用简单的递归（DFS）？**
+如果你在 `AddBackward::apply` 里直接调用 `tensor_a_.backward()`，这是一种深度优先搜索（DFS）。对于直线型网络没有问题。但如果你实现了像 **ResNet** 这样的网络，存在残差连接（Skip Connection）：$Y = M + A$ 和 $Z = M + B$，最后 $L = Y + Z$。
+此时 $M$ 被使用了两次。如果用 DFS，$L$ 调 $Y$，$Y$ 调 $M$，$M$ 就会立刻把不完整的梯度（只包含了 $Y$ 的部分）传给更底层！这是极其严重的错误。
+**正确的做法：** $M$ 必须等 $Y$ 和 $Z$ **都**把梯度传给它之后，才能激活自己向下传。这就是**拓扑排序（Topological Sort）**的入度（In-degree）机制。
+
+**实现拓扑排序的前提（核心接口）：**
+为了让引擎能在图上游走，你的 `BackwardFunction` 必须能告诉引擎：“我的输入是谁？”。
+因此，你需要去基类中新增一个纯虚函数接口：
+```cpp
+// 它的作用是向引擎报告自己的依赖项
+virtual std::vector<Tensor<real>> get_inputs() const = 0; 
+```
+你需要在 `AddBackward` 中实现它，简单地返回 `{tensor_a_, tensor_b_}` 即可。
+
+**引擎设计的两大阶段（算法思想）：**
+
+1. **阶段 1：图遍历，计算所有节点的入度 (In-degree)**
+   - **目标**：找出图里每一个节点被多少个父节点依赖。
+   - **数据结构 `std::unordered_map<AutogradMeta<real>*, int> in_degree`**：
+     这是 C++ 里的哈希表（Hash Map）。它的键（Key）是你张量里那个唯一的 `AutogradMeta` 裸指针，值（Value）是它的入度计数。我们用裸指针作为唯一 ID，因为不同的 Tensor 副本共享同一个 Meta。
+   - **数据结构 `std::unordered_set<AutogradMeta<real>*> visited`**：
+     哈希集合，用来记录哪些节点已经被遍历过了，防止在环状或菱形结构中重复遍历。
+   - **数据结构 `std::queue<Tensor<real>> bfs_queue`**：
+     广度优先搜索队列。
+   - **流程**：把起点（调用 `backward` 的那个 Tensor）放进队列。不断弹出节点，通过它的 `grad_fn` 和 `get_inputs()` 找到所有的子节点（输入张量）。给这些子张量的入度 +1，如果它们没被访问过，就放进队列继续遍历。
+
+2. **阶段 2：执行反向传播 (收割梯度)**
+   - **目标**：按照入度归零的顺序，依次激活节点，向下传递梯度。
+   - **数据结构 `std::queue<Tensor<real>> ready_queue`**：
+     这是执行队列。**只有入度为 0 的节点，才有资格进入这个队列！**
+   - **流程**：
+     1. 把起点放入 `ready_queue`（起点的入度天然是 0）。
+     2. 只要队列不空，弹出一个节点 `curr`。
+     3. 调用它的 `curr.grad_fn()->apply(curr.grad())`，把梯度向下传！
+     4. 遍历它的所有子节点（输入张量），在哈希表 `in_degree` 里把它们的入度减 1。
+     5. **灵魂判定**：如果某个子节点的入度减到了 0，说明它所有的父节点都已经把梯度传给它了！把它推入 `ready_queue`，等待下一次激活。
+
+这就是工业级 Autograd 引擎的全部奥秘！不需要我写代码，有了这套数据结构和算法流程，你完全可以自己手搓出来！
 
 ---
 
@@ -221,3 +258,62 @@ Tensor<real> operator+(const Tensor<real>& A, const Tensor<real>& B) {
 ### 2.4 阶段二与三的触发：`backward()` 引擎
 当用户调用 `tensor.backward()` 时，C++ 引擎必须执行拓扑排序并调用 `apply`。
 （为了降低难度，在早期版本中，如果你的网络是线性的（没有复用的分支），你可以用简单的递归调用 `grad_fn->apply()` 来代替复杂的拓扑排序引擎。但最终一定要上拓扑排序队列。）
+
+---
+
+## 4. C++ 语法弹药库 (Syntax Cheat Sheet)
+
+在手敲拓扑排序时，你可能会高频用到以下 C++ 特性：
+
+### 4.1 `std::unordered_map` 的常用操作
+它是基于哈希表实现的字典，查找和插入时间复杂度平均为 $O(1)$。
+**重点解答：** 因为我们的 Key 是裸指针 (`AutogradMeta<real>*`)，C++ 标准库 `<functional>` 原生提供了 `std::hash<T*>` 的特化版本，会直接利用指针的内存地址计算哈希值。因此，**你完全不需要手动提供哈希函数**！
+
+```cpp
+std::unordered_map<AutogradMeta<real>*, int> in_degree;
+
+// 1. 计数加一（C++很聪明，如果键不存在，会自动初始化为0再加1）
+in_degree[meta_ptr]++; 
+
+// 2. 计数减一
+in_degree[meta_ptr]--;
+
+// 3. 检查某个键是否存在
+if (in_degree.find(meta_ptr) != in_degree.end()) {
+    // 存在
+}
+```
+
+### 4.2 `std::unordered_set` 的常用操作
+用来记录哪些节点已经访问过，防止死循环。
+
+```cpp
+std::unordered_set<AutogradMeta<real>*> visited;
+
+// 1. 插入并判断是否是第一次插入
+if (visited.insert(meta_ptr).second) {
+    // 插入成功，说明之前没访问过
+} else {
+    // 之前已经访问过了
+}
+```
+
+### 4.3 `std::queue` 的常用操作
+用于 BFS 遍历和执行队列。
+
+```cpp
+std::queue<Tensor<real>> q;
+
+q.push(tensor);            // 入队（放到队尾）
+Tensor<real> curr = q.front(); // 查看队首元素
+q.pop();                   // 弹出队首元素（注意：pop本身不返回值）
+bool is_empty = q.empty(); // 判断队列是否为空
+```
+
+### 4.4 智能指针获取裸指针
+你的哈希表需要用 `AutogradMeta<real>*` 作为唯一键。
+
+```cpp
+// 假设你有一个 std::shared_ptr<AutogradMeta<real>>
+auto meta_ptr = tensor.autograd_meta_.get(); // .get() 可以提取底层的裸指针
+```

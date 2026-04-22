@@ -86,6 +86,7 @@ public:
     const std::vector<int>& stride()const noexcept{return stride_;}
     bool requires_grad() const noexcept{ return autograd_meta_ && autograd_meta_->requires_grad;}
     void set_requires_grad(bool require);
+    AutogradMeta<real>* get_autograd_meta() const{return autograd_meta_.get();}
 
     Tensor(const std::vector<int>& shape,bool requires_grad = false);
     Tensor(Tensor&& other) noexcept = default;
@@ -125,6 +126,7 @@ public:
     Tensor<real> grad() const;
     void set_grad_fn(std::shared_ptr<BackwardFunction<real>> fn);
     void backward();
+
 };
 }
 

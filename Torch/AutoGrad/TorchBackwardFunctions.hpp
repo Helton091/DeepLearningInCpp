@@ -9,6 +9,7 @@ class BackwardFunction{
 public:
     virtual ~BackwardFunction() = default;
     virtual void apply(const Tensor<real>& grad_output) = 0;
+    virtual std::vector<Tensor<real>> get_inputs() const = 0;
 };
 
 template<typename real>
@@ -19,6 +20,7 @@ private:
 public:
     AddBackward(const Tensor<real>& a,const Tensor<real>& b):tensor_a_(a),tensor_b_(b){}
     void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
 };
 
 template<typename real>
@@ -28,12 +30,23 @@ private:
 public:
     AddBackwardScaler(const Tensor<real>& a):tensor(a){}
     void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
 };
+
+template<typename real>
+std::vector<Tensor<real>> AddBackward<real>::get_inputs() const{
+    return {tensor_a_,tensor_b_};
+}
+
+template<typename real>
+std::vector<Tensor<real>> AddBackwardScaler<real>::get_inputs() const {
+    return {tensor};
+}
 
 template<typename real>
 void AddBackwardScaler<real>::apply(const Tensor<real>& grad_output){
     if(tensor.requires_grad()){
-        tensor.add_grad(grad);
+        tensor.add_grad(grad_output);
     }
 }
 
@@ -64,6 +77,7 @@ std::shared_ptr<BackwardFunction<real>> Tensor<real>::grad_fn() const {
 template<typename real>
 Tensor<real> Tensor<real>::grad() const {
     if (!autograd_meta_) throw std::runtime_error("Tensor does not require grad");
+    if (!autograd_meta_->has_grad) throw std::runtime_error("Tensor has no grad yet (has_grad is false)");
     return autograd_meta_->grad;
 }
 
@@ -89,7 +103,52 @@ void Tensor<real>::add_grad(const Tensor<real>& g) {
 
 template<typename real>
 void Tensor<real>::backward() {
-    // Empty placeholder for the backward engine (Step 4)
+    std::unordered_map<AutogradMeta<real>*,int> indegree;
+    std::unordered_set<AutogradMeta<real>*> visited;
+    std::queue<Tensor<real>> ready_queue;
+    std::queue<Tensor<real>> bfs_queue;
+    //step1 : calculate indegree for each autograd_meta
+    bfs_queue.push(*this);
+    AutogradMeta<real>* first_meta = this->get_autograd_meta();
+    visited.insert(first_meta);
+    while(!bfs_queue.empty()){
+        Tensor<real> curr_tensor = bfs_queue.front();
+        bfs_queue.pop();
+        AutogradMeta<real>* curr_meta = curr_tensor.get_autograd_meta();
+        BackwardFunction<real>* curr_backward_fn = curr_meta->grad_fn.get();
+        if(curr_backward_fn != nullptr) {
+            std::vector<Tensor<real>> next_tensors = curr_backward_fn->get_inputs();
+            for(Tensor<real> t : next_tensors){
+                AutogradMeta<real>* next_meta = t.get_autograd_meta();
+                if(!visited.count(next_meta)){
+                    bfs_queue.push(t);
+                    visited.insert(next_meta);
+                }
+                ++indegree[next_meta];
+            }
+        }
+    }
+    //step2 : 
+    ready_queue.push(*this);
+    
+    if(first_meta->has_grad == false){
+        first_meta->grad = ones_like(*this,false);
+    }
+    while(!ready_queue.empty()){
+        Tensor<real> curr_tensor = ready_queue.front();
+        ready_queue.pop();
+
+        AutogradMeta<real>* curr_meta = curr_tensor.get_autograd_meta();
+        BackwardFunction<real>* back_fn = curr_meta->grad_fn.get();
+        if(back_fn != nullptr){
+            back_fn->apply(curr_meta->grad);
+            std::vector<Tensor<real>> next_tensors = back_fn->get_inputs();
+            for(Tensor<real> t : next_tensors){
+                AutogradMeta<real>* next_meta = t.get_autograd_meta();
+                if(--indegree[next_meta] == 0) ready_queue.push(t);
+            }
+        }
+    }
     std::cout << "Backward pass triggered!\n";
 }
 

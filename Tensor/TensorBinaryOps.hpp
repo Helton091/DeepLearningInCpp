@@ -1,4 +1,5 @@
 #pragma once
+#include"../Torch/AutoGrad/TorchBackwardFunctions.hpp"
 namespace torch{
 template<typename real>
 Tensor<real> Tensor<real>::matmal(const Tensor<real>& other){
