@@ -118,6 +118,7 @@ public:
     Tensor<real> squeeze() const;
     Tensor<real> unsqueeze(int dim) const;
     Tensor<real> sum(int dim,bool keep_dim=false) const;
+    Tensor<real> expand(const std::vector<int>& target_shape) const;
     void mul_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] * b;}
     void add_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] + b;}
     void sub_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] - b;}

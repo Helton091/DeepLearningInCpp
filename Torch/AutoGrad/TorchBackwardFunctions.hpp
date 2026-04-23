@@ -109,6 +109,165 @@ public:
     void apply(const Tensor<real>& grad_output) override;
     std::vector<Tensor<real>> get_inputs() const override;
 };
+
+template<typename real>
+class TransposeBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+    int dim0;
+    int dim1;
+public:
+    TransposeBackward(const Tensor<real>& t,int d0,int d1) : tensor_(t),dim0(d0),dim1(d1){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+
+template<typename real>
+class PermuteBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+    std::vector<int> changed_dim_back;
+public:
+    PermuteBackward(const Tensor<real>& tensor_,const std::vector<int>& changed_dim_origin);
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+template<typename real>
+class ReshapeBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+    std::vector<int> original_shape_;
+public:
+    ReshapeBackward(const Tensor<real>& t,const std::vector<int>& original_shape) : tensor_(t),original_shape_(original_shape){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+
+template<typename real>
+class SqueezeBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+    int dim_;
+public:
+    SqueezeBackward(const Tensor<real>& tensor,int dim) : tensor_(tensor),dim_(dim){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+
+template<typename real>
+class SqueezeAllBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+    std::vector<int> original_shape_;
+public:
+    SqueezeAllBackward(const Tensor<real>& tensor,const std::vector<int> original_shape) : tensor_(tensor),original_shape_(original_shape){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+template<typename real>
+class UnSqueezeBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+    int dim_;
+public:
+    UnSqueezeBackward(const Tensor<real>& tensor,int dim) : tensor_(tensor),dim_(dim){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+
+template<typename real>
+class ContiguousBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+public:
+    ContiguousBackward(const Tensor<real>& tensor) : tensor_(tensor){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+template<typename real>
+std::vector<Tensor<real>> ContiguousBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+template<typename real>
+void ContiguousBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        tensor_.add_grad(grad_output);
+    }
+}
+
+template<typename real>
+std::vector<Tensor<real>> UnSqueezeBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+template<typename real>
+void UnSqueezeBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        tensor_.add_grad(grad_output.squeeze(dim_));
+    }
+}
+
+template<typename real>
+std::vector<Tensor<real>> SqueezeAllBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+
+template<typename real>
+void SqueezeAllBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        tensor_.add_grad(grad_output.reshape(original_shape_));
+    }
+}
+
+template<typename real>
+std::vector<Tensor<real>> SqueezeBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+
+template<typename real>
+void SqueezeBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        tensor_.add_grad(grad_output.unsqueeze(dim_));
+    }
+}
+
+template<typename real>
+std::vector<Tensor<real>> ReshapeBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+
+template<typename real>
+void ReshapeBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        tensor_.add_grad(grad_output.reshape(original_shape_));
+    }
+}
+
+template<typename real>
+PermuteBackward<real>::PermuteBackward(const Tensor<real>& tensor,const std::vector<int>& changed_dim_origin) : tensor_(tensor){
+    int ndim = changed_dim_origin.size();
+    changed_dim_back.resize(ndim);
+    for(int i=0;i<ndim;++i){
+        changed_dim_back[changed_dim_origin[i]] = i;
+    }
+}
+template<typename real>
+std::vector<Tensor<real>> PermuteBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+
+template<typename real>
+void PermuteBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        tensor_.add_grad(grad_output.permute(changed_dim_back));
+    }
+}
+
+template<typename real>
+void TransposeBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        tensor_.add_grad(grad_output.transpose(dim0_,dim1_));
+    }
+}
 template<typename real>
 std::vector<Tensor<real>> MatMulBackward<real>::get_inputs() const{
     return {tensor_a_,tensor_b_};

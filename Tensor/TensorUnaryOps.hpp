@@ -89,7 +89,13 @@ Tensor<real> Tensor<real>::unsqueeze(int dim) const {
     
     new_stride.insert(new_stride.begin() + real_dim, new_stride_val); 
     
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad()); 
+    Tensor<real> output(new_shape, new_stride, data_, requires_grad());
+    if(is_grad_enabled && requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<UnSqueezeBackward<real>> grad_fn = std::make_shared<UnSqueezeBackward<real>>(*this,dim);
+        output.set_grad_fn(grad_fn);
+    }
+    return output
 } 
 
 template<typename real>
@@ -111,8 +117,13 @@ Tensor<real> Tensor<real>::squeeze() const{
         new_shape[i] = shape_[j];
         new_stride[i] = stride_[j];
     }
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad());
-
+    Tensor<real> output(new_shape, new_stride, data_, requires_grad());
+    if(is_grad_enabled && requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<SqueezeAllBackward<real>> grad_fn = std::make_shared<SqueezeAllBackward<real>>(*this,shape());
+        output.set_grad_fn(grad_fn);
+    }
+    return output;
 }
 
 
@@ -128,7 +139,13 @@ Tensor<real> Tensor<real>::squeeze(int dim) const{
 
     new_shape.erase(new_shape.begin() + dim);
     new_stride.erase(new_stride.begin()+ dim);
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad());
+    Tensor<real> output(new_shape, new_stride, data_, requires_grad());
+    if(is_grad_enabled && requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<SqueezeBackward<real>> grad_fn = std::make_shared<SqueezeBackward<real>>(*this,dim);
+        output.set_grad_fn(grad_fn);
+    }
+    return output;
 }
 
 template<typename real> 
@@ -165,6 +182,11 @@ Tensor<real> Tensor<real>::reshape(std::vector<int> new_shape) const {
     }
 
     Tensor<real> output(new_shape, data_, requires_grad()); 
+    if(is_grad_enabled && requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<ReshapeBackward<real>> grad_fn = std::make_shared<ReshapeBackward<real>>(*this,shape());
+        output.set_grad_fn(grad_fn);
+    }
     return output; 
 } 
 
@@ -190,7 +212,13 @@ Tensor<real> Tensor<real>::permute(std::vector<int> dims) const{
         new_shape[i] = shape_[dims[i]];
         new_stride[i] = stride_[dims[i]];
     }
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad());
+    Tensor<real> output(new_shape, new_stride, data_, requires_grad());
+    if(is_grad_enabled && requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<PermuteBackward<real>> grad_fn = std::make_shared<PermuteBackward<real>>(*this,shape());
+        output.set_grad_fn(grad_fn);
+    }
+    return output;
 }
 
 template<typename real>
@@ -201,15 +229,22 @@ Tensor<real> Tensor<real>::transpose(int dim0, int dim1) const{
     if(dim0<0 || dim1<0 || dim0>=ndim || dim1>=ndim){
         throw std::invalid_argument("dimension out of bound when transposing");
     }
-    if(dim0==dim1) return *this;
+    if(dim0==dim1){ 
+        return *this;
+    }
 
     std::vector<int> new_shape = shape_;
     std::vector<int> new_stride = stride_;
     
     std::swap(new_shape[dim0],new_shape[dim1]);
     std::swap(new_stride[dim0],new_stride[dim1]);
-    
-    return Tensor<real>(new_shape, new_stride, data_, requires_grad());
+    Tensor<real> output(new_shape, new_stride, data_, requires_grad());
+    if(is_grad_enabled && requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<TransposeBackward<real>> grad_fn = std::make_shared<TransposeBackward<real>>(*this,dim0,dim1);
+        output.set_grad_fn(grad_fn);
+    }
+    return output;
 }
 
 template<typename real>
@@ -238,6 +273,33 @@ Tensor<real> Tensor<real>::contiguous() const{
             }
         }
     }
+    if(is_grad_enabled &&  requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<ContiguousBackward<real>> grad_fn = std::make_shared<ContiguousBackward<real>>(*this);
+        output.set_grad_fn(grad_fn);
+    }
     return output;
+}
+
+template<typename real>
+Tensor<real> Tensor<real>::expand(const std::vector<int>& target_shape) const{
+    int ndim = shape_.size();
+    int target_ndim = target_shape.size();
+    if (target_ndim < ndim) {
+        throw std::invalid_argument("target_shape must have same or more dimensions than tensor");
+    }    
+    std::vector<int> target_stride(target_ndim,0);
+    for(int i=0;i<ndim;++i){
+        int real_idx_origin = ndim - i - 1;
+        int real_idx_target = target_ndim - i - 1;
+        if(target_shape[real_idx_target] == shape_[real_idx_origin]){
+            target_stride[real_idx_target] = stride_[real_idx_origin];
+        } 
+        else if(shape_[real_idx_origin] != 1) {
+            throw BroadCastingError("inable to broadcast when expanding");
+        }
+    }
+    return Tensor<real>(target_shape,target_stride,data_,requires_grad());
+
 }
 }
