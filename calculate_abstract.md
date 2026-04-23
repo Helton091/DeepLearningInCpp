@@ -1,5 +1,54 @@
 # Autograd Computational Graph Architecture
 
+## 0. 数学基础：张量对张量的导数与 VJP 魔法 (Tensor Calculus & VJP)
+
+在进入代码和算法之前，我们必须回答一个直击灵魂的数学问题：“张量对张量的偏导数到底是个什么鬼？”
+如果你习惯了标量微积分 $y = f(x)$ 的导数 $dy/dx$，当你面对一个矩阵 $Y$ 对另一个矩阵 $X$ 求导时，事情会变得极其恐怖。
+
+### 0.1 严格的数学定义：雅可比矩阵 (Jacobian Matrix)
+假设有一个函数 $\vec{y} = f(\vec{x})$，其中 $\vec{x}$ 是长度为 $n$ 的向量，$\vec{y}$ 是长度为 $m$ 的向量。
+在数学上，“向量 $\vec{y}$ 对向量 $\vec{x}$ 的导数”被称为**雅可比矩阵（Jacobian）** $J$。它是一个 $m \times n$ 的矩阵，矩阵中的每一个元素是 $\vec{y}$ 的每一个分量对 $\vec{x}$ 的每一个分量的偏导数：
+$
+J = \begin{pmatrix}
+\frac{\partial y_1}{\partial x_1} & \cdots & \frac{\partial y_1}{\partial x_n} \\
+\vdots & \ddots & \vdots \\
+\frac{\partial y_m}{\partial x_1} & \cdots & \frac{\partial y_m}{\partial x_n}
+\end{pmatrix}
+$
+如果 $Y$ 是一张 $200 \times 200$ 的图像（$40000$ 个元素），$X$ 也是 $200 \times 200$。那么 $\frac{\partial Y}{\partial X}$ 的雅可比矩阵将是一个 $40000 \times 40000$ 的超大矩阵（包含 16 亿个偏导数）！
+如果在神经网络的反向传播中，我们在节点之间传递这种雅可比矩阵，任何显卡都会瞬间内存溢出（OOM）。
+
+### 0.2 深度学习的救命稻草：标量损失假定
+为什么 PyTorch 不会 OOM？为什么我们传递的 `grad_output` 形状总是和张量自己一样大？
+因为**深度学习的最终目标（Loss）永远是一个标量（Scalar）！**
+
+在 Autograd 中，我们**永远不计算**“中间张量 $Y$ 对中间张量 $X$ 的导数”。
+我们真正在计算和传递的，永远是**“最终的标量损失 $L$ 对中间张量 $X$ 的导数”**，记为 $\nabla_X L$ 或 $\frac{\partial L}{\partial X}$。
+因为 $L$ 是标量，所以根据微积分，$\frac{\partial L}{\partial X}$ 的形状永远与 $X$ 的形状一模一样！
+
+### 0.3 引擎的灵魂：向量-雅可比乘积 (Vector-Jacobian Product, VJP)
+那么，链式法则怎么体现呢？
+假设有一条链：$X \xrightarrow{f} Y \xrightarrow{g} L$ ($L$ 是标量)。
+根据链式法则：
+$ \frac{\partial L}{\partial X} = \frac{\partial L}{\partial Y} \cdot \frac{\partial Y}{\partial X} $
+在我们的引擎中：
+- $\frac{\partial L}{\partial Y}$ 就是从父节点传下来的 `grad_output`（它和 $Y$ 的形状一样，我们可以把它拉平看作一个行向量 $\vec{v}^T$）。
+- $\frac{\partial Y}{\partial X}$ 就是那个恐怖的雅可比矩阵 $J$。
+- 所以，节点要计算传给下一个节点的梯度，实际上是在算 **$\vec{v}^T \cdot J$**！
+
+**魔法来了：计算 $\vec{v}^T \cdot J$ 根本不需要把 $J$ 完整地写出来！**
+例如对于加法 $Y = X + B$：
+雅可比矩阵 $J$ 本质上是个单位矩阵 $I$。所以 $\vec{v}^T \cdot I = \vec{v}^T$。
+这就是为什么在 `AddBackward` 中，传给 $X$ 的梯度等于 `grad_output`，完全不需要构造什么矩阵，直接把传进来的梯度丢下去就行了。
+
+对于矩阵乘法 $M = A \times X$：
+数学推导可以证明，标量 $L$ 对 $A$ 的偏导数 $\frac{\partial L}{\partial A} = \frac{\partial L}{\partial M} \times X^T$。
+这就是你在 `MatmulBackward` 里要写的代码：`grad_A = matmul(grad_output, X.transpose())`。
+
+**结论**：你在编写 `BackwardFunction::apply` 时，你写的代码本质上就是在实现这个算子的 **VJP（Vector-Jacobian Product）解析解**。你利用算子的数学特性，直接用 `grad_output` 和输入张量算出了结果，巧妙地避开了构造雅可比矩阵的灾难。
+
+---
+
 ## 1. 算法视角：PyTorch 底层计算图的运行逻辑 (Algorithm Perspective)
 
 为了让你彻底看清这套机制，我们用一个最经典的具体例子来做沙盘推演。

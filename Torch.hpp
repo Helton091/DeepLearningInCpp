@@ -1,5 +1,8 @@
 #ifndef TORCH_HPP_
 #define TORCH_HPP_
+namespace torch{
+inline bool is_grad_enabled = true;
+}
 #include"Tensor.hpp"
 #include"Torch/TorchTensorGen.hpp"
 #include"Torch/TorchMath.hpp"

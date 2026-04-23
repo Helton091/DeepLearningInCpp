@@ -5,6 +5,7 @@
 #include<queue>
 namespace torch{
 
+
 template<typename real = float>
 struct AutogradMeta{
     Tensor<real> grad;

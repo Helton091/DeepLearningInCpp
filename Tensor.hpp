@@ -118,7 +118,10 @@ public:
     Tensor<real> squeeze() const;
     Tensor<real> unsqueeze(int dim) const;
     Tensor<real> sum(int dim,bool keep_dim=false) const;
-
+    void mul_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] * b}
+    void add_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] + b}
+    void sub_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] - b}
+    void div_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] / b}
     // Torch\TorchBackwardFunctions.hpp
     bool is_leaf() const;
     std::shared_ptr<BackwardFunction<real>> grad_fn() const;

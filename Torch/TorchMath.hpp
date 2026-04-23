@@ -1,6 +1,8 @@
 #pragma once
 #include"../Tensor.hpp"
 namespace torch{
+
+
 template<typename real = float>
 Tensor<real> dot(const Tensor<real>& A,const Tensor<real>& B);
 
