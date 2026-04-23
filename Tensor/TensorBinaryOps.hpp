@@ -119,7 +119,7 @@ Tensor<real> operator-(const Tensor<real>& A, real B){
     }
     if(is_grad_enabled && A.requires_grad()){
         output.set_requires_grad(true);
-        std::shared_ptr<SubBackwardScaler<real>> grad_fn = std::make_shared<SubBackwardScaler<real>>(A,true);
+        std::shared_ptr<SubBackwardScaler<real>> grad_fn = std::make_shared<SubBackwardScaler<real>>(A, true);
         output.set_grad_fn(grad_fn);
     }
     return output;
@@ -192,7 +192,7 @@ Tensor<real> operator*(real A, const Tensor<real>& B){
     }
     if(is_grad_enabled && B.requires_grad()){
         output.set_requires_grad(true);
-        std::shared_ptr<MulBackwardScaler<real>> grad_fn = std::make_shared<MulBackwardScaler<real>>(A,B);
+        std::shared_ptr<MulBackwardScaler<real>> grad_fn = std::make_shared<MulBackwardScaler<real>>(B, A);
         output.set_grad_fn(grad_fn);
     }
     return output;
@@ -206,7 +206,7 @@ Tensor<real> operator*(const Tensor<real>& A, real B){
     }
     if(is_grad_enabled && A.requires_grad()){
         output.set_requires_grad(true);
-        std::shared_ptr<MulBackwardScaler<real>> grad_fn = std::make_shared<MulBackwardScaler<real>>(B,A);
+        std::shared_ptr<MulBackwardScaler<real>> grad_fn = std::make_shared<MulBackwardScaler<real>>(A, B);
         output.set_grad_fn(grad_fn);
     }
     return output;
@@ -280,6 +280,11 @@ Tensor<real> operator/(real A, const Tensor<real>& B){
         }
         output.data_[i] = A / B.data_[i];
     }
+    if(is_grad_enabled && B.requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<DivBackwardScaler<real>> grad_fn= std::make_shared<DivBackwardScaler<real>>(B,A,false);
+        output.set_grad_fn(grad_fn);
+    }
     return output;
 }
 
@@ -291,6 +296,11 @@ Tensor<real> operator/(const Tensor<real>& A, real B){
     Tensor<real> output(A.shape_);
     for(int i = 0; i < A.numel_; ++i) {
         output.data_[i] = A.data_[i] / B;
+    }
+    if(is_grad_enabled && A.requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<DivBackwardScaler<real>> grad_fn = std::make_shared<DivBackwardScaler<real>>(A,B,true);
+        output.set_grad_fn(grad_fn);
     }
     return output;
 }
@@ -349,6 +359,11 @@ Tensor<real> operator/(const Tensor<real>& A, const Tensor<real>& B){
             throw std::invalid_argument("Division by zero encountered in tensor elements");
         }
         output.data_[i] = A.data_[i1] / B.data_[i2];
+    }
+    if(is_grad_enabled && (A.requires_grad() || B.requires_grad())){
+        output.set_requires_grad(true);
+        std::shared_ptr<DivBackward<real>> grad_fn = std::make_shared<DivBackward<real>>(A,B);
+        output.set_grad_fn(grad_fn);
     }
     return output;
 }

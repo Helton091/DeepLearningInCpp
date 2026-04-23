@@ -12,54 +12,89 @@ void print_separator(const std::string& title) {
 }
 
 int main() {
-    print_separator("Level 1: 基础加法反向传播 (Basic Addition)");
-    // A: [2, 2], requires_grad = true
-    auto A = torch::ones<float>({2, 2}, true); 
-    
-    // B: [2, 2], requires_grad = true, 初始值为 2.0
-    // 【修复】：使用 fill_ 就地赋值，防止 operator* 生成一个丢了 requires_grad 的新张量
-    auto B = torch::ones<float>({2, 2}, true);
-    B.fill_(2.0f); 
+    print_separator("Test 1: 加减乘除大杂烩 (Complex Arithmetic)");
+    // 数学公式: L = ((A + B) * C - D) / 2.0
+    // A=1, B=2, C=3, D=4
+    auto A = torch::ones<float>({2, 2}, true);
+    auto B = torch::ones<float>({2, 2}, true); B.fill_(2.0f);
+    auto C = torch::ones<float>({2, 2}, true); C.fill_(3.0f);
+    auto D = torch::ones<float>({2, 2}, true); D.fill_(4.0f);
 
-    auto C = A + B; // C 应该全为 3.0
-    cout << "C (A + B) requires_grad: " << (C.requires_grad() ? "true" : "false") << "\n";
-    
-    C.backward(); // 启动你手搓的拓扑排序引擎！
-    
-    // A 和 B 的局部偏导都是 1，且传进来的 grad_output 默认是 1
-    // 所以 A 和 B 的梯度应该全都是 1.0
-    cout << "A.grad:\n" << A.grad() << "\n";
-    cout << "B.grad:\n" << B.grad() << "\n";
+    auto t1 = A + B;       // t1 = 3
+    auto t2 = t1 * C;      // t2 = 9
+    auto t3 = t2 - D;      // t3 = 5
+    auto L = t3 / 2.0f;    // L = 2.5
 
-    print_separator("Level 2: 带有广播机制的加法 (Broadcast Addition)");
-    auto X = torch::ones<float>({2, 3}, true);      // 形状 [2, 3]
+    cout << "L (Expected: 2.5):\n" << L << "\n";
     
-    // Y: 形状 [3]，一维向量，初始值为 5.0
-    auto Y = torch::ones<float>({3}, true);
-    Y.fill_(5.0f);
+    // Retain gradients for intermediate tensors for debugging
+    t1.set_requires_grad(true);
+    t2.set_requires_grad(true);
+    t3.set_requires_grad(true);
 
-    auto Z = X + Y; // Z 形状 [2, 3]
-    Z.backward();
-
-    // X 的梯度形状应该是 [2, 3]，全为 1.0
-    cout << "X.grad (should be [2, 3] of 1s):\n" << X.grad() << "\n";
-    // Y 参与了广播，它的梯度必须经过 unbroadcast 累加！
-    // 因为 Z 的行数为 2，所以 Y 的梯度应该是 [1.0 + 1.0, 1.0 + 1.0, 1.0 + 1.0] = [2.0, 2.0, 2.0]
-    cout << "Y.grad (should be [3] of 2s, testing unbroadcast):\n" << Y.grad() << "\n";
-
-    print_separator("Level 3: 终极考验 - 复杂 DAG 与残差连接 (ResNet Style)");
-    // 这是对拓扑排序入度算法的最强考验！
-    auto M = torch::ones<float>({2, 2}, true);
-    M.fill_(10.0f);
-    
-    auto N = M + M; // N = 2M. 对 M 的偏导是 2
-    auto L = N + M; // L = N + M = 3M. 对 M 的总偏导应该是 3
-    
     L.backward();
 
-    // 如果拓扑排序写错了，或者入度统计有 Bug（比如多次入队），这里的梯度就会错。
-    // 正确答案：M 的梯度应该是全 3.0！
-    cout << "M.grad (should be [2, 2] of 3s):\n" << M.grad() << "\n";
+    cout << "DEBUG - t3.grad (Expected: 0.5):\n" << t3.grad() << "\n";
+    cout << "DEBUG - t2.grad (Expected: 0.5):\n" << t2.grad() << "\n";
+    cout << "DEBUG - t1.grad (Expected: 1.5):\n" << t1.grad() << "\n";
+
+    // 手算梯度 (dL/d...)
+    // dL/dt3 = 1/2 = 0.5
+    // dL/dD = dL/dt3 * dt3/dD = 0.5 * (-1) = -0.5
+    // dL/dt2 = dL/dt3 * dt3/dt2 = 0.5 * 1 = 0.5
+    // dL/dC = dL/dt2 * dt2/dC = 0.5 * t1 = 0.5 * 3 = 1.5
+    // dL/dt1 = dL/dt2 * dt2/dt1 = 0.5 * C = 0.5 * 3 = 1.5
+    // dL/dA = dL/dt1 * dt1/dA = 1.5 * 1 = 1.5
+    // dL/dB = dL/dt1 * dt1/dB = 1.5 * 1 = 1.5
+
+    cout << "A.grad (Expected: 1.5):\n" << A.grad() << "\n";
+    cout << "B.grad (Expected: 1.5):\n" << B.grad() << "\n";
+    cout << "C.grad (Expected: 1.5):\n" << C.grad() << "\n";
+    cout << "D.grad (Expected: -0.5):\n" << D.grad() << "\n";
+
+    print_separator("Test 2: 非交换标量运算 (Non-commutative Scalar Ops)");
+    // 数学公式: L = 10.0 / (5.0 - X)
+    // X=3. L = 10 / 2 = 5
+    auto X = torch::ones<float>({2, 2}, true); X.fill_(3.0f);
+    
+    auto denom = 5.0f - X; // denom = 2
+    auto L2 = 10.0f / denom;
+    
+    cout << "L2 (Expected: 5.0):\n" << L2 << "\n";
+    L2.backward();
+
+    // 手算梯度 (dL2/dX)
+    // dL2/ddenom = -10 / denom^2 = -10 / 4 = -2.5
+    // ddenom/dX = -1
+    // dL2/dX = (-2.5) * (-1) = 2.5
+    cout << "X.grad (Expected: 2.5):\n" << X.grad() << "\n";
+
+    print_separator("Test 3: 带有广播机制的除法与减法 (Broadcast Div/Sub)");
+    // X: [2, 3], 值全为 12
+    // Y: [3],    值全为 3
+    auto X_b = torch::ones<float>({2, 3}, true); X_b.fill_(12.0f);
+    auto Y_b = torch::ones<float>({3}, true);    Y_b.fill_(3.0f);
+
+    // Z = X_b / Y_b - Y_b
+    // Z = 12 / 3 - 3 = 4 - 3 = 1
+    auto div_res = X_b / Y_b;
+    auto Z = div_res - Y_b;
+    
+    cout << "Z (Expected: 1.0):\n" << Z << "\n";
+    Z.backward();
+
+    // 手算梯度
+    // dZ/ddiv_res = 1. 所以 dZ/dX_b = 1 * (1/Y_b) = 1/3
+    // X_b 形状是 [2, 3]，不需要 unbroadcast，直接全是 1/3 (0.333)
+    cout << "X_b.grad (Expected: 0.3333):\n" << X_b.grad() << "\n";
+
+    // 对 Y_b 的梯度有两部分来源：
+    // 1. 减号右边: dZ/dY_b (right) = -1
+    // 2. 除号右边: dZ/dY_b (left) = dZ/ddiv_res * ddiv_res/dY_b = 1 * (-X_b / Y_b^2) = -12/9 = -4/3
+    // 聚合后：总偏导 = -1 - 4/3 = -7/3 = -2.3333
+    // 因为 Y_b 参与了 broadcast (被扩展成了两行)，所以它的真实梯度必须 sum 起来：
+    // Y_b.grad = (-7/3) * 2 = -14/3 = -4.6666
+    cout << "Y_b.grad (Expected: -4.6666):\n" << Y_b.grad() << "\n";
 
     return 0;
 }

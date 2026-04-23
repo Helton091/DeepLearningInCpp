@@ -12,12 +12,23 @@ public:
     virtual std::vector<Tensor<real>> get_inputs() const = 0;
 };
 template<typename real>
-class MulBackwardScaler : public BackwardFunction<real>{
+class DivBackward : public BackwardFunction<real>{
 private:
-    real a;
+    Tensor<real> tensor_a_;
     Tensor<real> tensor_b_;
 public:
-    MulBackwardScaler(real a,const Tensor<real>& b);
+    DivBackward(const Tensor<real>& a,const Tensor<real>& b) : tensor_a_(a),tensor_b_(b){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+
+template<typename real>
+class MulBackwardScaler : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_a_;
+    real b_;
+public:
+    MulBackwardScaler(const Tensor<real>& a, real b);
     void apply(const Tensor<real>& grad_output) override;
     std::vector<Tensor<real>> get_inputs() const override;
 };
@@ -77,10 +88,61 @@ public:
     std::vector<Tensor<real>> get_inputs() const override;
 };
 template<typename real>
-void MulBackwardScaler<real>::apply(const Tensor<real>& grad_output){
+class DivBackwardScaler : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+    real num_;
+    bool is_tensor_first;
+public:
+    DivBackwardScaler(const Tensor<real>& t,real n,bool is_t_first) : tensor_(t),num_(n),is_tensor_first(is_t_first){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+template<typename real>
+std::vector<Tensor<real>> SubBackwardScaler<real>::get_inputs() const{
+    return {tensor_a_};
+}
+
+template<typename real>
+std::vector<Tensor<real>> DivBackwardScaler<real>::get_inputs() const{
+    return {tensor_};
+}
+template<typename real>
+void DivBackwardScaler<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        if(is_tensor_first){
+            Tensor<real> new_grad = grad_output / num_;
+            tensor_.add_grad(new_grad);
+        } else {
+            Tensor<real> new_grad = (grad_output * (num_ * static_cast<real>(-1.0))) / (tensor_ * tensor_);
+            tensor_.add_grad(new_grad);
+        }
+    }
+}
+
+template<typename real>
+std::vector<Tensor<real>> DivBackward<real>::get_inputs() const{
+    return {tensor_a_,tensor_b_};
+}
+
+template<typename real>
+void DivBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_a_.requires_grad()){
+        tensor_a_.add_grad(unbroadcast(grad_output / tensor_b_, tensor_a_.shape()));
+    }
     if(tensor_b_.requires_grad()){
-        Tensor<real> new_grad = grad_output * a;
-        tensor_b_.add_grad(new_grad);
+        Tensor<real> new_grad = (grad_output * tensor_a_) / tensor_b_;
+        new_grad = new_grad / tensor_b_;
+        new_grad = new_grad * static_cast<real>(-1.0);
+        tensor_b_.add_grad(unbroadcast(new_grad, tensor_b_.shape()));
+    }
+}
+
+
+template<typename real>
+void MulBackwardScaler<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_a_.requires_grad()){
+        tensor_a_.add_grad(grad_output * b_);
     }
 }
 
@@ -92,41 +154,46 @@ std::vector<Tensor<real>> MulBackward<real>::get_inputs() const{
 template<typename real>
 void MulBackward<real>::apply(const Tensor<real>& grad_output){
     if(tensor_a_.requires_grad()){
-        Tensor<real> new_grad = unbroadcast(grad_output * tensor_b_,tensor_a_.shape());
-        tensor_a_.add_grad(new_grad);
+        tensor_a_.add_grad(unbroadcast(grad_output * tensor_b_,tensor_a_.shape()));
     }
     if(tensor_b_.requires_grad()){
-        Tensor<real> new_grad = unbroadcast(grad_output * tensor_a_,tensor_b_.shape());
-        tensor_b_.add_grad(new_grad);
+        tensor_b_.add_grad(unbroadcast(grad_output * tensor_a_,tensor_b_.shape()));
     }
 
 }
 
 template<typename real>
-MulBackwardScaler<real>::MulBackwardScaler(real a,const Tensor<real>& b) : a(a),tensor_b_(b){}
+MulBackwardScaler<real>::MulBackwardScaler(const Tensor<real>& a, real b) : tensor_a_(a), b_(b){}
 
 template<typename real>
 MulBackward<real>::MulBackward(const Tensor<real>& a,const Tensor<real>& b) : tensor_a_(a),tensor_b_(b){}
 
 template<typename real>
+std::vector<Tensor<real>> MulBackwardScaler<real>::get_inputs() const{
+    return {tensor_a_};
+}
+
+template<typename real>
 void SubBackwardScaler<real>::apply(const Tensor<real>& grad_output){
     if(tensor_a_.requires_grad()){
-        Tensor<real> grad = unbroadcast(grad_output,tensor_a_.shape());
-        if(!is_a_first) grad.mul_(static_cast<real>(-1.0));
-        tensor_a_.add_grad(grad);
+        if(is_a_first){
+            // C = A - scalar, dC/dA = 1
+            tensor_a_.add_grad(grad_output);
+        } else {
+            // C = scalar - A, dC/dA = -1
+            tensor_a_.add_grad(grad_output * static_cast<real>(-1.0));
+        }
     }
 }
 
 template<typename real>
 void SubBackward<real>::apply(const Tensor<real>& grad_output){
     if(tensor_a_.requires_grad()){
-        Tensor<real> grad = unbroadcast(grad_output,tensor_a_.shape());
-        tensor_a_.add_grad(grad);
+        tensor_a_.add_grad(unbroadcast(grad_output,tensor_a_.shape()));
     }
     if(tensor_b_.requires_grad()){
-        Tensor<real> grad = unbroadcast(grad_output,tensor_b_.shape());
-        grad = grad.mul_(static_cast<real>(-1.0));
-        tensor_b_.add_grad(grad);
+        Tensor<real> grad = grad_output * static_cast<real>(-1.0);
+        tensor_b_.add_grad(unbroadcast(grad,tensor_b_.shape()));
     }
 }
 
@@ -136,10 +203,7 @@ SubBackwardScaler<real>::SubBackwardScaler(const Tensor<real>& a,bool is_a_first
 template<typename real>
 SubBackward<real>::SubBackward(const Tensor<real>& a,const Tensor<real>& b): tensor_a_(a),tensor_b_(b){}
 
-template<typename real>
-std::vector<Tensor<real>> SubBackwardScaler<real>::get_inputs() const{
-    return {tensor_a_};
-}
+
 
 template<typename real>
 std::vector<Tensor<real>> SubBackward<real>::get_inputs() const{
