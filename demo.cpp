@@ -96,5 +96,51 @@ int main() {
     // Y_b.grad = (-7/3) * 2 = -14/3 = -4.6666
     cout << "Y_b.grad (Expected: -4.6666):\n" << Y_b.grad() << "\n";
 
+    print_separator("Test 4: 全连接层 (Linear Layer w/ Matmul Backward)");
+    // 模拟一个最经典的神经网络全连接层： Y = X @ W^T + b
+    // Batch Size = 2, In Features = 3, Out Features = 2
+    auto X_linear = torch::ones<float>({2, 3}, true); // 输入数据 [2, 3]
+    auto W = torch::ones<float>({2, 3}, true);        // 权重矩阵 [2, 3]
+    W.fill_(2.0f);
+    auto bias = torch::ones<float>({2}, true);        // 偏置向量 [2]
+    bias.fill_(3.0f);
+
+    // 1. W 的转置 W^T，形状变为 [3, 2]
+    auto W_t = W.transpose(0, 1);
+    
+    // 2. X @ W^T，结果形状为 [2, 2]
+    // X全是1，W^T全是2，矩阵乘法: 1*2 + 1*2 + 1*2 = 6
+    auto M_linear = torch::matmul(X_linear, W_t); 
+    
+    // 3. 加上偏置 b (带广播: [2] -> [2, 2])
+    // 结果: 6 + 3 = 9
+    auto Y_linear = M_linear + bias; 
+    
+    // 4. 算个 Loss: 所有元素的和
+    // 实际上就是 L = Y.sum()
+    // 为了简单，我们手动乘以一个标量来模拟梯度回传
+    auto L_linear = Y_linear * 1.0f;
+    
+    cout << "Y_linear (Expected: 9.0):\n" << Y_linear << "\n";
+    L_linear.backward();
+
+    // 手算梯度：
+    // dL/dY = 1.0
+    // Y = M + b  => dY/db = 1 (广播需 sum), dY/dM = 1
+    // M = X @ W^T => dM/dW^T = X^T, dM/dX = W
+    
+    // bias.grad: [2, 2] 的 1 沿第 0 维 sum -> [2] 的 2.0
+    cout << "bias.grad (Expected: 2.0):\n" << bias.grad() << "\n";
+    
+    // X.grad = dM * (W^T)^T = 1.0 @ W = [2, 2] 的 1 @ [2, 3] 的 2
+    // => 1*2 + 1*2 = 4.0
+    cout << "X_linear.grad (Expected: 4.0):\n" << X_linear.grad() << "\n";
+
+    // W_t.grad = X^T @ dM = [3, 2] 的 1 @ [2, 2] 的 1 = [3, 2] 的 2.0
+    // W.grad 应该是 W_t.grad 的转置，也就是 [2, 3] 的 2.0
+    // 但是这里注意！由于你的 transpose 目前只是返回一个 view，
+    // 当梯度回传给 W_t 时，它会传给 W_t 背后的那个真实的 W 节点！
+    cout << "W.grad (Expected: 2.0 or view dependent):\n" << W.grad() << "\n";
+
     return 0;
 }

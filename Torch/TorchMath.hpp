@@ -22,7 +22,15 @@ template<typename real>
 Tensor<real> matmul(const Tensor<real>& A,const Tensor<real>& B){
     int a_ndim = A.shape().size(),b_ndim = B.shape().size();
     if(a_ndim<=0 || b_ndim<=0) throw std::invalid_argument("for matmal, A or B can't be scaler");
-    if(a_ndim==1 && b_ndim==1) return dot(A,B);
+    if(a_ndim==1 && b_ndim==1){
+        Tensor<real> output = dot(A,B);
+        if(is_grad_enabled && (A.requires_grad() || B.requires_grad())){
+            output.set_requires_grad(true);
+            std::shared_ptr<MatMulBackward<real>> grad_fn = std::make_shared<MatMulBackward<real>>(A,B);
+            output.set_grad_fn(grad_fn);
+        }
+        return output;
+    }
     bool is_a_1d = (a_ndim == 1);
     bool is_b_1d = (b_ndim == 1);
     Tensor<real> A_temp = (is_a_1d) ? A.unsqueeze(0) : A;
@@ -35,6 +43,11 @@ Tensor<real> matmul(const Tensor<real>& A,const Tensor<real>& B){
         matmul_2d_core(A_temp.data_ptr(),B_temp.data_ptr(),output.data_ptr(),A_temp.shape()[0],A_temp.shape()[1],B_temp.shape()[1],A_temp.stride()[0],A_temp.stride()[1],B_temp.stride()[0],B_temp.stride()[1],output.stride()[0],output.stride()[1]);
         if(is_a_1d) output = output.squeeze(0);
         if(is_b_1d) output = output.squeeze(-1);
+        if(is_grad_enabled && (A.requires_grad() || B.requires_grad())){
+            output.set_requires_grad(true);
+            std::shared_ptr<MatMulBackward<real>> grad_fn = std::make_shared<MatMulBackward<real>>(A,B);
+            output.set_grad_fn(grad_fn);
+        }
         return output;
     } else {
         //batched matrix multiplication
@@ -93,6 +106,11 @@ Tensor<real> matmul(const Tensor<real>& A,const Tensor<real>& B){
         }
         if(is_a_1d) output = output.squeeze(max_ndim - 2);
         if(is_b_1d) output = output.squeeze(max_ndim - 1);
+        if(is_grad_enabled && (A.requires_grad() || B.requires_grad())){
+            output.set_requires_grad(true);
+            std::shared_ptr<MatMulBackward<real>> grad_fn = std::make_shared<MatMulBackward<real>>(A,B);
+            output.set_grad_fn(grad_fn);
+        }
         return output;
     }
 }

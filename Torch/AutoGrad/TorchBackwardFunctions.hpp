@@ -98,6 +98,33 @@ public:
     void apply(const Tensor<real>& grad_output) override;
     std::vector<Tensor<real>> get_inputs() const override;
 };
+
+template<typename real>
+class MatMulBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_a_;
+    Tensor<real> tensor_b_;
+public:
+    MatMulBackward(const Tensor<real>& a,const Tensor<real>& b) : tensor_a_(a),tensor_b_(b){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+template<typename real>
+std::vector<Tensor<real>> MatMulBackward<real>::get_inputs() const{
+    return {tensor_a_,tensor_b_};
+}
+
+template<typename real>
+void MatMulBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_a_.requires_grad()){
+        tensor_a_.add_grad(unbroadcast(matmul(grad_output,tensor_b_.transpose(-2,-1)),tensor_a_.shape()));
+    }
+    if(tensor_b_.requires_grad()){
+        tensor_b_.add_grad(unbroadcast(matmul(tensor_a_.transpose(-2,-1),grad_output),tensor_b_.shape()));
+    }
+}
+
+
 template<typename real>
 std::vector<Tensor<real>> SubBackwardScaler<real>::get_inputs() const{
     return {tensor_a_};
