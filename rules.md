@@ -26,3 +26,13 @@
 - **Encapsulation (Hiding from Outside)**: We do not want external users (like the training loop) to arbitrarily insert or delete parameters. They should only interact via the public API (`register_parameter`, `parameters()`, `zero_grad()`). Thus, `public` is strictly forbidden for `parameters_` and `modules_`.
 - **Inheritance (Visibility to Children)**: If we used `private`, derived classes (like `nn::Linear` or custom `MyModel`) would have absolutely no access to these containers or the `is_training_` flag. While `register_parameter` handles insertion, a derived class might legitimately need to check if a specific sub-module exists or read the `is_training_` flag to alter its `forward()` behavior (e.g., Dropout behaves differently in train vs eval mode).
 - **The Balance**: `protected` perfectly models the "Base-Derived" relationship. It keeps the internal state safe from the outside world but maintains a trusted environment within the `nn::Module` class hierarchy.
+
+### C++17 Features in nn::Sequential
+
+- **Variadic Templates & Fold Expressions (可变参数模板与折叠表达式)**: 
+  To mimic PyTorch's elegant `nn.Sequential(Linear(...), ReLU(), ...)` syntax in C++, we use Variadic Templates (`template<typename... Modules>`). Prior to C++17, unpacking these parameter packs required writing cumbersome recursive template functions.
+  With **C++17 Fold Expressions**, we can unpack and execute a function on the entire parameter pack in a single line: `(push_back(mods), ...);`. 
+  - The comma `,` acts as the binary operator.
+  - `mods` is the parameter pack.
+  - `...` tells the compiler to expand the expression. 
+  - This effectively expands at compile time to: `push_back(mod1), push_back(mod2), push_back(mod3);`, calling the function sequentially for every argument passed to the constructor.

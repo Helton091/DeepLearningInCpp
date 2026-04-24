@@ -30,6 +30,8 @@ public:
     virtual void train(bool on = true);
 
     virtual void eval();
+
+    virtual Tensor<real> forward(const Tensor<real>& t){throw std::runtime_error("forward function isn't implemented!");}
 };
 
 template<typename real>
