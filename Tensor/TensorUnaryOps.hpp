@@ -36,6 +36,11 @@ Tensor<real> Tensor<real>::sum(int dim,bool keep_dim) const{
                 else old_shape_indices[j] = 0;
             }
         }
+        if(is_grad_enabled && requires_grad()){
+            output.set_requires_grad(true);
+            std::shared_ptr<SumBackward<real>> grad_fn = std::make_shared<SumBackward<real>>(*this, dim, keep_dim, shape_);
+            output.set_grad_fn(grad_fn);
+        }
         return output;
     } else {
         std::vector<int> new_shape(ndim - 1);
@@ -60,6 +65,11 @@ Tensor<real> Tensor<real>::sum(int dim,bool keep_dim) const{
                 if(old_shape_indices[j] < shape_[j]) break;
                 else old_shape_indices[j] = 0;
             }
+        }
+        if(is_grad_enabled && requires_grad()){
+            output.set_requires_grad(true);
+            std::shared_ptr<SumBackward<real>> grad_fn = std::make_shared<SumBackward<real>>(*this, dim, keep_dim, shape_);
+            output.set_grad_fn(grad_fn);
         }
         return output;
     }
@@ -95,7 +105,7 @@ Tensor<real> Tensor<real>::unsqueeze(int dim) const {
         std::shared_ptr<UnSqueezeBackward<real>> grad_fn = std::make_shared<UnSqueezeBackward<real>>(*this,dim);
         output.set_grad_fn(grad_fn);
     }
-    return output
+    return output;
 } 
 
 template<typename real>
@@ -296,10 +306,16 @@ Tensor<real> Tensor<real>::expand(const std::vector<int>& target_shape) const{
             target_stride[real_idx_target] = stride_[real_idx_origin];
         } 
         else if(shape_[real_idx_origin] != 1) {
-            throw BroadCastingError("inable to broadcast when expanding");
+            throw std::runtime_error("inable to broadcast when expanding");
         }
     }
-    return Tensor<real>(target_shape,target_stride,data_,requires_grad());
+    Tensor<real> output(target_shape,target_stride,data_,requires_grad());
+    if(is_grad_enabled && requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<ExpandBackward<real>> grad_fn = std::make_shared<ExpandBackward<real>>(*this);
+        output.set_grad_fn(grad_fn);
+    }
+    return output;
 
 }
 }

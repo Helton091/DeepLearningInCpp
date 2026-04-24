@@ -17,9 +17,18 @@ struct AutogradMeta{
 
 template<typename real>
 Tensor<real> unbroadcast(const Tensor<real>& grad_output,const std::vector<int> target_shape);
+
+
 }
 
 namespace torch{
+template<typename real>
+void Tensor<real>::zero_grad(){
+    if(requires_grad()){
+        autograd_meta_->grad.fill_(static_cast<real>(0.0));
+    }
+}
+
 template<typename real>
 Tensor<real> unbroadcast(const Tensor<real>& grad_output,const std::vector<int> target_shape){
     int grad_output_ndim = grad_output.shape().size();

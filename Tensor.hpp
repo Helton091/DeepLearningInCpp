@@ -123,7 +123,7 @@ public:
     void add_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] + b;}
     void sub_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] - b;}
     void div_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] / b;}
-    // Torch\TorchBackwardFunctions.hpp
+    // Torch/AutoGrad/TorchBackwardFunctions.hpp
     bool is_leaf() const;
     std::shared_ptr<BackwardFunction<real>> grad_fn() const;
     void add_grad(const Tensor<real>& g);
@@ -131,6 +131,8 @@ public:
     void set_grad_fn(std::shared_ptr<BackwardFunction<real>> fn);
     void backward();
 
+    //Torch/AutoGrad/AutoGrad.hpp
+    void zero_grad();
 };
 }
 

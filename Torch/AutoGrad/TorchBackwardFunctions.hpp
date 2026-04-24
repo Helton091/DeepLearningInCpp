@@ -184,6 +184,62 @@ public:
     void apply(const Tensor<real>& grad_output) override;
     std::vector<Tensor<real>> get_inputs() const override;
 };
+
+template<typename real>
+class SumBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+    int dim_;
+    bool keep_dim_;
+    std::vector<int> original_shape_;
+public:
+    SumBackward(const Tensor<real>& tensor,int dim,bool keep_dim,const std::vector<int>& original_shape) 
+        : tensor_(tensor),dim_(dim),keep_dim_(keep_dim),original_shape_(original_shape){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+
+template<typename real>
+class ExpandBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+public:
+    ExpandBackward(const Tensor<real>& tensor) : tensor_(tensor){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+template<typename real>
+std::vector<Tensor<real>> ExpandBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+
+template<typename real>
+std::vector<Tensor<real>> TransposeBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+template<typename real>
+void ExpandBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        tensor_.add_grad(unbroadcast(grad_output,tensor_.shape()));
+    }
+}
+
+template<typename real>
+std::vector<Tensor<real>> SumBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+
+template<typename real>
+void SumBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        if(keep_dim_){
+            tensor_.add_grad(grad_output.expand(original_shape_));
+        } else {
+            tensor_.add_grad(grad_output.unsqueeze(dim_).expand(original_shape_));
+        }   
+    }
+}
+
 template<typename real>
 std::vector<Tensor<real>> ContiguousBackward<real>::get_inputs() const{
     return {tensor_};
@@ -265,7 +321,7 @@ void PermuteBackward<real>::apply(const Tensor<real>& grad_output){
 template<typename real>
 void TransposeBackward<real>::apply(const Tensor<real>& grad_output){
     if(tensor_.requires_grad()){
-        tensor_.add_grad(grad_output.transpose(dim0_,dim1_));
+        tensor_.add_grad(grad_output.transpose(dim0,dim1));
     }
 }
 template<typename real>

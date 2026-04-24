@@ -8,4 +8,5 @@ inline bool is_grad_enabled = true;
 #include"Torch/TorchMath.hpp"
 #include"Torch/AutoGrad/TorchBackwardFunctions.hpp"
 #include"Torch/AutoGrad/AutoGrad.hpp"
+#include"Torch/nn/Module.hpp"
 #endif

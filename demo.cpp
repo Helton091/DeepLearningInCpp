@@ -142,5 +142,38 @@ int main() {
     // 当梯度回传给 W_t 时，它会传给 W_t 背后的那个真实的 W 节点！
     cout << "W.grad (Expected: 2.0 or view dependent):\n" << W.grad() << "\n";
 
+    print_separator("Test 5: 疯狂的视图与聚合算子 (Unary Ops Backward)");
+    // 这个测试旨在把你刚刚写的所有视图和聚合算子串起来
+    auto V = torch::ones<float>({2, 3}, true); // V: [2, 3], 全是 1.0
+    V.fill_(2.0f); // V: 全是 2.0
+    
+    // 1. Reshape: [2, 3] -> [6]
+    auto V_flat = V.reshape({6});
+    
+    // 2. Unsqueeze: [6] -> [1, 6]
+    auto V_unsq = V_flat.unsqueeze(0);
+    
+    // 3. Expand: [1, 6] -> [3, 6]
+    auto V_exp = V_unsq.expand({3, 6});
+    
+    // 4. Sum (keep_dim = false): [3, 6] 沿着 dim 0 累加 -> [6]
+    // 此时 V_exp 的每一列都是 3 个相同的 2.0，加起来应该是 6.0
+    auto V_sum = V_exp.sum(0, false);
+    
+    // 5. 算个 Loss: [6] 所有的数加起来
+    auto L_unary = V_sum.sum(0, false);
+    
+    cout << "L_unary (Expected: 36.0): " << L_unary.data_ptr()[0] << "\n";
+    L_unary.backward();
+
+    // 梯度回传手算推导：
+    // dL/dV_sum: [6] 的全是 1.0
+    // dL/dV_exp (SumBackward): 把 [6] 的 1.0 撑回到 [3, 6]，全是 1.0
+    // dL/dV_unsq (ExpandBackward): 沿着 dim 0 把 [3, 6] 的 1.0 累加起来，变成 [1, 6] 的 3.0
+    // dL/dV_flat (UnsqueezeBackward): 把 [1, 6] 的 3.0 挤成 [6] 的 3.0
+    // dL/dV (ReshapeBackward): 把 [6] 的 3.0 变回 [2, 3] 的 3.0
+    // 所以最终 V.grad 应该是一个 [2, 3] 的矩阵，里面全是 3.0！
+    cout << "V.grad (Expected: 3.0 in shape [2, 3]):\n" << V.grad() << "\n";
+
     return 0;
 }
