@@ -44,10 +44,10 @@ std::map<std::string,Tensor<real>> Module<real>::named_parameters(const std::str
         result[full_name] = tensor;
     }
     if(recursive){
-        for(std::pair<const std::string,std::shared_ptr<Module<real>>>& kv : modules_){
+        for(const std::pair<const std::string,std::shared_ptr<Module<real>>>& kv : modules_){
             std::string sub_prefix = prefix.empty() ? kv.first : prefix + "." + kv.first;
             std::map<std::string,Tensor<real>> sub_result = kv.second->named_parameters(sub_prefix,true);
-            for(const std::pair<std::string,Tensor<real>>& s : sub_result){
+            for(const std::pair<const std::string,Tensor<real>>& s : sub_result){
                 result[s.first] = s.second;
             }
         }

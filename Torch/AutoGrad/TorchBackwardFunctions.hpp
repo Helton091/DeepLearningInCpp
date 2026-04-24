@@ -592,7 +592,6 @@ void Tensor<real>::backward() {
             }
         }
     }
-    std::cout << "Backward pass triggered!\n";
     is_grad_enabled = true;
 }
 
