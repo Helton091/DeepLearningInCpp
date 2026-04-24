@@ -1,5 +1,23 @@
 #pragma once
 namespace torch{
+
+template<typename real>
+Tensor<real> Tensor<real>::sum() const{
+    Tensor<real> contiguous_tensor = contiguous();
+    Tensor<real> output({},requires_grad());
+    real* output_data_ptr = output.data_.get();
+    real* curr_data_ptr = contiguous_tensor.data_.get();
+    *output_data_ptr = static_cast<real>(0.0);
+    for(int i=0;i<numel_;++i){
+        *output_data_ptr += curr_data_ptr[i];
+    }
+    if(requires_grad()){
+        output.set_requires_grad(true);
+        std::shared_ptr<SumAllBackward<real>> grad_fn = std::make_shared<SumAllBackward<real>>(*this,this->shape());
+        output.set_grad_fn(grad_fn);
+    }
+    return output;
+}
 template<typename real>
 Tensor<real> Tensor<real>::sum(int dim,bool keep_dim) const{
     int ndim = shape_.size();

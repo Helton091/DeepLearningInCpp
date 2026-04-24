@@ -208,6 +208,29 @@ public:
     void apply(const Tensor<real>& grad_output) override;
     std::vector<Tensor<real>> get_inputs() const override;
 };
+
+template<typename real>
+class SumAllBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+    std::vector<int> original_shape_;
+public:
+    SumAllBackward(const Tensor<real>& tensor,std::vector<int> original_shape) : tensor_(tensor),original_shape_(original_shape){}
+    void apply(const Tensor<real>& grad_output) override;
+    std::vector<Tensor<real>> get_inputs() const override;
+};
+template<typename real>
+std::vector<Tensor<real>> SumAllBackward<real>::get_inputs() const{
+    return {tensor_};
+}
+
+template<typename real>
+void SumAllBackward<real>::apply(const Tensor<real>& grad_output){
+    if(tensor_.requires_grad()){
+        tensor_.add_grad(grad_output.expand(original_shape_));
+    }
+}
+
 template<typename real>
 std::vector<Tensor<real>> ExpandBackward<real>::get_inputs() const{
     return {tensor_};
