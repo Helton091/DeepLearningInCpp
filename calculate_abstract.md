@@ -364,5 +364,70 @@ bool is_empty = q.empty(); // 判断队列是否为空
 
 ```cpp
 // 假设你有一个 std::shared_ptr<AutogradMeta<real>>
+
+---
+
+## 5. 进阶算子：Conv2d (二维卷积) 的数学与实现逻辑
+
+在实现了基础算子之后，`Conv2d` 是深度学习框架中最核心的计算机视觉算子。由于卷积操作本质上可以转化为矩阵乘法（通过 `im2col` 技术），我们在这里详细解析它的前向与反向传播数学逻辑。
+
+### 5.1 前向传播 (Forward Pass)
+
+假设我们有一个输入张量 $X$ 和卷积核权重 $W$（为简化推导，暂不考虑 bias，bias 的逻辑与全连接层一致，直接加在输出通道上即可）。
+
+- **输入 $X$ 形状**: `[N, C_in, H_in, W_in]`
+  - $N$: Batch Size
+  - $C_{in}$: 输入通道数
+  - $H_{in}, W_{in}$: 输入图像的高和宽
+- **权重 $W$ 形状**: `[C_out, C_in, K_H, K_W]`
+  - $C_{out}$: 输出通道数
+  - $K_H, K_W$: 卷积核的高和宽
+- **输出 $Y$ 形状**: `[N, C_out, H_out, W_out]`
+
+**朴素实现 (Naive Sliding Window)**：
+通过七层嵌套循环（N, C_out, H_out, W_out, C_in, K_H, K_W）直接计算。虽然代码简单，但在 CPU/GPU 上执行效率极低，因为无法利用矩阵乘法（BLAS）的高度优化。
+
+**工业级实现 (im2col + GEMM)**：
+1. **im2col (Image to Column)**：将输入张量 $X$ 中每次滑动窗口覆盖的局部区域（形状为 `[C_in, K_H, K_W]`）展平为一个一维向量（长度为 `C_in * K_H * K_W`）。滑动窗口在图像上移动 `H_out * W_out` 次，我们将这些向量按列拼接，形成一个大矩阵 $X_{col}$。
+   - $X_{col}$ 的形状为 `[C_in * K_H * K_W, H_out * W_out]`。（对于多 Batch，通常在 Batch 维度循环，或者展平到列中）。
+2. **Reshape 权重**：将权重 $W$ 展平为二维矩阵 $W_{row}$。
+   - $W_{row}$ 的形状为 `[C_out, C_in * K_H * K_W]`。
+3. **矩阵乘法 (GEMM)**：
+   - $Y_{col} = W_{row} \times X_{col}$
+   - $Y_{col}$ 的形状为 `[C_out, H_out * W_out]`。
+4. **col2im / Reshape**：将 $Y_{col}$ 变回 `[C_out, H_out, W_out]`，再加上 Batch 维度，得到最终输出 $Y$。
+
+### 5.2 反向传播 (Backward Pass)
+
+在反向传播时，`Conv2dBackward` 节点会接收到来自上游的梯度 `grad_output`（即 $\frac{\partial L}{\partial Y}$），其形状与输出 $Y$ 相同：`[N, C_out, H_out, W_out]`。我们需要计算对权重 $W$ 的梯度（$\frac{\partial L}{\partial W}$）和对输入 $X$ 的梯度（$\frac{\partial L}{\partial X}$）。
+
+基于 `im2col` 的前向传播可以看作是一个矩阵乘法 $Y_{col} = W_{row} \times X_{col}$。根据我们在 0.3 节学到的矩阵乘法 VJP 规则，卷积的反向传播可以极其优雅地转化为：
+
+#### 1. 对权重 $W$ 的求导 ($\nabla_W L$)
+根据矩阵乘法求导法则：$\nabla_{W_{row}} L = \nabla_{Y_{col}} L \times X_{col}^T$
+- $\nabla_{Y_{col}} L$ 是 `grad_output` 展平后的矩阵，形状为 `[C_out, H_out * W_out]`。
+- $X_{col}$ 是前向传播时保存的 im2col 结果，形状为 `[C_in * K_H * K_W, H_out * W_out]`。转置后为 `[H_out * W_out, C_in * K_H * K_W]`。
+- 矩阵相乘得到形状为 `[C_out, C_in * K_H * K_W]` 的梯度。
+- 最后将其 Reshape 回 `[C_out, C_in, K_H, K_W]`，加上如果有多个 Batch 则进行累加，即可得到 `W.grad`。
+
+#### 2. 对输入 $X$ 的求导 ($\nabla_X L$)
+根据矩阵乘法求导法则：$\nabla_{X_{col}} L = W_{row}^T \times \nabla_{Y_{col}} L$
+- $W_{row}^T$ 的形状为 `[C_in * K_H * K_W, C_out]`。
+- 相乘后得到形状为 `[C_in * K_H * K_W, H_out * W_out]` 的 $\nabla_{X_{col}} L$。
+- **难点：col2im**。因为在 `im2col` 过程中，由于滑动窗口的重叠，输入图像的同一个像素可能被复制到了 $X_{col}$ 的多个不同列中。因此，在反向传播时，我们需要把 $\nabla_{X_{col}} L$ 中的梯度累加（scatter_add）回原始图像尺寸 `[C_in, H_in, W_in]` 对应的位置。这个操作被称为 `col2im`。
+
+### 5.3 在框架中的落地思路 (Roadmap for Conv2d)
+
+1. **基础张量操作**：
+   - 首先，你需要实现一个可靠的 `im2col` 函数和对应的逆操作 `col2im` 函数。这两个函数通常是纯 C++ 的指针/索引操作，需要仔细处理 `stride` 和 `padding`。
+2. **前向算子 `conv2d`**：
+   - 接受 `X`, `W`, `bias`, `stride`, `padding`。
+   - 调用 `im2col` -> 调整形状 -> 执行你现有的 `matmul` -> 加上 `bias` -> 还原形状。
+   - 埋点：创建 `Conv2dBackward` 节点，保存 $X$（或者直接保存算好的 $X_{col}$ 牺牲内存换速度）、$W$ 的指针以及 stride/padding 参数。
+3. **反向节点 `Conv2dBackward`**：
+   - 接收 `grad_output`。
+   - 计算 $W$ 梯度：对 `grad_output` reshape，与缓存的 $X_{col}^T$ 做 `matmul`。
+   - 计算 $X$ 梯度：权重转置与 `grad_output` 做 `matmul`，然后调用 `col2im` 将结果累加回原图尺寸。
+   - 分发梯度到 `add_grad`。
 auto meta_ptr = tensor.autograd_meta_.get(); // .get() 可以提取底层的裸指针
 ```

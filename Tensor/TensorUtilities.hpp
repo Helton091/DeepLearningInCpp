@@ -1,6 +1,23 @@
 #pragma once
 #include"../Torch/AutoGrad/AutoGrad.hpp"
 namespace torch{
+template<typename real>
+Tensor<real> Tensor<real>::clone() const{
+    std::shared_ptr<real []> new_data(new real[numel_]);
+    Tensor<real> contig_tensor = this->contiguous();
+    const real* src_data = contig_tensor.data_.get();
+    real* dest_data = new_data.get();
+    for(int i=0;i<numel_;++i) dest_data[i] = src_data[i];
+
+    Tensor<real> output_tensor(shape_,new_data,requires_grad());
+    if(is_grad_enabled && requires_grad()){
+        output_tensor.set_requires_grad(true);
+        auto grad_fn = std::make_shared<CloneBackward<real>>(*this);
+        output_tensor.set_grad_fn(grad_fn);
+    }
+    return output_tensor;
+
+}
 
 template<typename real>
 void Tensor<real>::set_requires_grad(bool require){

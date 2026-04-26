@@ -87,6 +87,7 @@ public:
     bool requires_grad() const noexcept{ return autograd_meta_ && autograd_meta_->requires_grad;}
     void set_requires_grad(bool require);
     AutogradMeta<real>* get_autograd_meta() const{return autograd_meta_.get();}
+    Tensor<real> clone() const; //always return contiguous tensor
 
     Tensor(const std::vector<int>& shape,bool requires_grad = false);
     Tensor(Tensor&& other) noexcept = default;
@@ -124,6 +125,7 @@ public:
     void add_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] + b;}
     void sub_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] - b;}
     void div_(real b){for(int i=0;i<numel_;++i) data_[i] = data_[i] / b;}
+    Tensor<real> relu() const;
     // Torch/AutoGrad/TorchBackwardFunctions.hpp
     bool is_leaf() const;
     std::shared_ptr<BackwardFunction<real>> grad_fn() const;

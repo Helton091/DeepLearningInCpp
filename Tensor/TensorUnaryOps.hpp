@@ -1,5 +1,19 @@
 #pragma once
 namespace torch{
+template<typename real>
+Tensor<real> Tensor<real>::relu() const{
+    Tensor<real> output_tensor = this->clone();
+    real* output_data = output_tensor.data_.get();
+    for(int i=0;i<output_tensor.numel_;++i){
+        if(output_data[i] < 0) output_data[i] = 0;
+    }
+    if(output_tensor.requires_grad()){
+        output_tensor.set_requires_grad(true);
+        auto grad_fn = std::make_shared<ReluBackward<real>>(output_tensor);
+        output_tensor.set_grad_fn(grad_fn);
+    }
+    return output_tensor;
+}
 
 template<typename real>
 Tensor<real> Tensor<real>::sum() const{

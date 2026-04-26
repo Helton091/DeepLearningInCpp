@@ -595,6 +595,155 @@ void Tensor<real>::backward() {
     is_grad_enabled = true;
 }
 
+template<typename real>
+class CloneBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_;
+public:
+    CloneBackward(const Tensor<real>& tensor) : tensor_(tensor){}
+    void apply(const Tensor<real>& grad_output) override{
+        if(tensor_.requires_grad()) tensor_.add_grad(grad_output);
+    }
+    std::vector<Tensor<real>> get_inputs() const override{
+        return {tensor_};
+    }
+};
+
+template<typename real>
+class ReluBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> tensor_; //output_tensor, must be contiguous
+public:
+    ReluBackward(const Tensor<real>& output_tensor) : tensor_(output_tensor){}
+    void apply(const Tensor<real>& grad_output) override{
+        if(tensor_.requires_grad()){
+            Tensor<real> new_grad = grad_output.clone();
+            const real* data = tensor_.data_ptr();
+            real* grad_data = new_grad.data_ptr();
+            for(int i=0;i<tensor_.numel();++i){
+                if(data[i] <= 0) grad_data[i] = 0; 
+            }
+            tensor_.add_grad(new_grad);
+        }
+    }
+    std::vector<Tensor<real>> get_inputs() const override{
+        return {tensor_};
+    }
+};
+
+template<typename real>
+class CrossEntropyBackward : public BackwardFunction<real>{
+private:
+    Tensor<real> logits_;
+    Tensor<real> softmax_probs_;
+    Tensor<real> targets_;
+public:
+    CrossEntropyBackward(const Tensor<real>& logits,const Tensor<real>& softmax_probs,const Tensor<real>& targets) : logits_(logits),softmax_probs_(softmax_probs),targets_(targets){}
+    void apply(const Tensor<real>& grad_output) override{
+        if(!logits_.requires_grad()) return;
+        Tensor<real> grad_logits = softmax_probs_.clone();
+        real* grad_logits_data = grad_logits.data_ptr();
+        const real* targets_data = targets_.data_ptr();
+
+        int batch_size = logits_.shape()[0];
+        int num_classes = logits_.shape()[1];
+
+        for(int i=0;i<batch_size;++i){
+            int target_class = static_cast<int>(targets_data[i]);
+            grad_logits_data[i*num_classes + target_class] -= static_cast<real>(1.0);
+        }
+        grad_logits = grad_logits / static_cast<real>(batch_size);
+        grad_logits = grad_logits * grad_output;
+        logits_.add_grad(grad_logits);
+    }
+    std::vector<Tensor<real>> get_inputs() const override{
+        return {logits_};
+    }
+};
+
+template<typename real>
+class Conv2dBackward : public BackwardFunction<real> {
+private:
+    Tensor<real> X_;
+    Tensor<real> W_;
+    Tensor<real> bias_;
+    Tensor<real> X_col_; // Cached from forward pass
+    int stride_;
+    int padding_;
+
+public:
+    Conv2dBackward(const Tensor<real>& X, const Tensor<real>& W, const Tensor<real>& bias, 
+                   const Tensor<real>& X_col, int stride, int padding) 
+        : X_(X), W_(W), bias_(bias), X_col_(X_col), stride_(stride), padding_(padding) {}
+
+    void apply(const Tensor<real>& grad_output) override {
+        // grad_output is [Batch_size, C_out, H_out, W_out]
+        const int C_out = W_.shape()[0];
+        const int K_H = W_.shape()[2];
+        const int K_W = W_.shape()[3];
+        const int X_ndim = X_.shape().size();
+        const int C_in_X = X_.shape()[X_ndim - 3];
+
+        int Batch_size = 1;
+        for(int i = 0; i < X_ndim - 3; ++i) Batch_size *= X_.shape()[i];
+        
+        int H_out = grad_output.shape()[grad_output.shape().size() - 2];
+        int W_out = grad_output.shape()[grad_output.shape().size() - 1];
+
+        // 1. Reshape grad_output to Y_col format: [Batch_size, C_out, H_out * W_out]
+        Tensor<real> grad_Y_col = grad_output.reshape({Batch_size, C_out, H_out * W_out});
+
+        // 2. Gradient w.r.t Bias (if requires_grad)
+        if (bias_.numel() > 0 && bias_.requires_grad()) {
+            // grad_bias = sum over Batch, H_out, W_out
+            // Summing over last dimension (H_out * W_out) -> [Batch_size, C_out]
+            Tensor<real> grad_bias = grad_Y_col.sum(-1, false); 
+            // Summing over Batch_size -> [C_out]
+            if (Batch_size > 1) grad_bias = grad_bias.sum(0, false);
+            
+            bias_.add_grad(unbroadcast(grad_bias, bias_.shape()));
+        }
+
+        // 3. Gradient w.r.t Weight W
+        if (W_.requires_grad()) {
+            // dW_row = grad_Y_col @ X_col^T
+            // grad_Y_col: [Batch, C_out, H_out*W_out]
+            // X_col_: [Batch, C_in*K_H*K_W, H_out*W_out] -> transpose(-2,-1) -> [Batch, H_out*W_out, C_in*K_H*K_W]
+            Tensor<real> dW_batched = matmul(grad_Y_col, X_col_.transpose(-2, -1));
+            // dW_batched: [Batch, C_out, C_in*K_H*K_W]
+            
+            // Sum over batch dimension to get total weight gradient
+            Tensor<real> dW_row = (Batch_size > 1) ? dW_batched.sum(0, false) : dW_batched;
+            
+            // Reshape back to [C_out, C_in, K_H, K_W]
+            Tensor<real> grad_W = dW_row.reshape(W_.shape());
+            W_.add_grad(unbroadcast(grad_W, W_.shape()));
+        }
+
+        // 4. Gradient w.r.t Input X
+        if (X_.requires_grad()) {
+            // dX_col = W_row^T @ grad_Y_col
+            // W_row: [C_out, C_in*K_H*K_W] -> transpose -> [C_in*K_H*K_W, C_out]
+            Tensor<real> W_row = W_.reshape({C_out, C_in_X * K_H * K_W});
+            // W_row^T is 2D, grad_Y_col is 3D batched. matmul will broadcast W_row^T to all batches
+            Tensor<real> dX_col = matmul(W_row.transpose(-2, -1), grad_Y_col);
+            // dX_col shape: [Batch, C_in*K_H*K_W, H_out*W_out]
+            
+            // col2im to accumulate gradients back to image dimensions [Batch, C_in, H_in, W_in]
+            Tensor<real> grad_X = col2im(dX_col, W_, X_.shape(), stride_, padding_);
+            X_.add_grad(grad_X);
+        }
+    }
+
+    std::vector<Tensor<real>> get_inputs() const override {
+        std::vector<Tensor<real>> inputs;
+        if(X_.requires_grad()) inputs.push_back(X_);
+        if(W_.requires_grad()) inputs.push_back(W_);
+        if(bias_.numel() > 0 && bias_.requires_grad()) inputs.push_back(bias_);
+        return inputs;
+    }
+};
+
 }
 
 
